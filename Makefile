@@ -47,3 +47,15 @@ all:
 
 clean:
 	make -C $(KERN_DIR) M=$(PWD) clean
+	
+
+
+
+# 新增目标：编译用户测试程序
+TEST_APP_SRC = test_my_camera.c
+TEST_APP_NAME = test_my_camera
+
+# 用户程序编译规则
+test_app: $(TEST_APP_SRC)
+	/opt/android-ndk-r21/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi28-clang -o $(TEST_APP_NAME) $(TEST_APP_SRC) -Wall -Wextra
+	
