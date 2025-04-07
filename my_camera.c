@@ -18,19 +18,12 @@
 // 定义 TAG
 #define TAG "[my_camera_drv]: "
 
-
 // 封装打印函数
 #define cam_info(fmt, ...) \
     pr_info(TAG "%s " fmt, __func__, ##__VA_ARGS__)
 
 #define cam_err(fmt, ...) \
     pr_err(TAG "%s " fmt, __func__, ##__VA_ARGS__)
-
-#define cam_warn(fmt, ...) \
-    pr_warn(TAG "%s " fmt, __func__, ##__VA_ARGS__)
-	
-#define cam_debug(fmt, ...) \
-    pr_debug(TAG "%s " fmt, __func__, ##__VA_ARGS__)
 
 
 // 定义图像格式
@@ -691,8 +684,9 @@ static int my_camera_probe(struct platform_device *pdev)
     return 0;
 
 err_video_reg:
-    video_device_release(vdev); 						// 释放 video_device
+    // 不需要调用 video_device_release()，V4L2 核心会管理 video_device 的生命周期
 err_video_dev:
+	vb2_queue_release(q);								// 释放 VB2 资源
     v4l2_device_unregister_subdev(&mycam->csi_subdev); 	// 注销 CSI 子设备
 err_csi:
     v4l2_device_unregister_subdev(&mycam->isp_subdev); 	// 注销 ISP 子设备
@@ -700,7 +694,6 @@ err_isp:
     v4l2_device_unregister(&mycam->v4l2_dev); 			// 注销 v4l2_device
 err_cleanup:
 	// 这里不需要手动释放 mycam 的内存，devm_kzalloc 分配的会在设备卸载时自动释放
-
 	return ret;
 }
 
@@ -741,58 +734,25 @@ static int my_camera_remove(struct platform_device *pdev)
     return 0;
 }
 
+
+static const struct of_device_id my_camera_of_match_table[] = {
+	{.compatible = "mycompany,my_camera"},
+	{ },
+};
+
 static struct platform_driver my_camera_driver = {
     .driver = {
         .name = "my_camera",
         .owner = THIS_MODULE,
+        .of_match_table = my_camera_of_match_table,
     },
-    .probe = my_camera_probe,
+    .probe  = my_camera_probe,
     .remove = my_camera_remove,
 };
 
-static struct platform_device *pdev;
 
-static int __init my_camera_init(void)
-{
-    int ret;
-
-    cam_info("\n");
-
-    // 注册 platform_driver
-    ret = platform_driver_register(&my_camera_driver);
-    if (ret) {
-        cam_err("Failed to register platform driver\n");
-        return ret;
-    }
-
-    // 动态创建 platform_device
-    pdev = platform_device_register_simple("my_camera", -1, NULL, 0);
-    if (IS_ERR(pdev)) {
-        cam_err("Failed to register platform device\n");
-		ret = -ENOMEM;
-        goto err_driver_unregister;
-    }
-	
-    cam_info("exit\n");
-    return 0;
-
-err_driver_unregister:
-	platform_driver_unregister(&my_camera_driver);
-	return ret;
-}
-
-static void __exit my_camera_exit(void)
-{
-    cam_info("\n");
-    platform_device_unregister(pdev);
-    platform_driver_unregister(&my_camera_driver);
-    cam_info("exit\n");
-}
-
-
-module_init(my_camera_init);
-module_exit(my_camera_exit);
+module_platform_driver(my_camera_driver);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Your Name");
-MODULE_DESCRIPTION("Camera Driver using platform_driver and platform_device");
+MODULE_DESCRIPTION("CAMERA Driver");

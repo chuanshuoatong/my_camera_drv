@@ -40,6 +40,9 @@ EXTRA_CFLAGS += -I$(KERN_DIR)/include \
 
 
 # 编译目标
+obj-m += my_isp.o
+obj-m += my_csi.o
+obj-m += my_sensor.o
 obj-m += my_camera.o
 
 all:
@@ -58,4 +61,4 @@ TEST_APP_NAME = test_my_camera
 # 用户程序编译规则
 test_app: $(TEST_APP_SRC)
 	/opt/android-ndk-r21/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi28-clang -o $(TEST_APP_NAME) $(TEST_APP_SRC) -Wall -Wextra
-	
+

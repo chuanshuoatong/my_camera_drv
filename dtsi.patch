@@ -1,0 +1,53 @@
+
+	// 省略其它节点
+	// ...
+	// ...
+	// 注意： my_isp、my_csi、my_sensor、my_camera 要放到 compatible = "simple-bus" 的父节点下面才能被自动解析成 platform_device
+	soc {
+		compatible = "simple-bus";
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+		
+		// 省略其它节点
+		// ...
+		// ...
+		// ...
+		
+		my_isp: my_isp {
+			compatible = "mycompany,my_isp";
+			status = "okay";
+		};
+		
+		my_csi: my_csi {
+			compatible = "mycompany,my_csi";
+			status = "okay";
+		};
+		
+		my_sensor: my_sensor {
+			compatible = "mycompany,my_sensor";
+			status = "okay";
+			
+			port {
+				my_sensor_ep: endpoint {
+					remote-endpoint = <&my_camera_ep>;
+				};
+			};
+		};
+		
+		my_camera: my_camera {
+			compatible = "mycompany,my_camera";
+			status = "okay";
+			
+			// 使用 phandle 引用静态硬件设备
+			isp-subdev = <&my_isp>;
+			csi-subdev = <&my_csi>;
+			
+			// 使用 port/endpoint 描述外部设备（如传感器）
+			port {
+				my_camera_ep: endpoint {
+					remote-endpoint = <&my_sensor_ep>;
+				};
+			};
+		};		
+	};
