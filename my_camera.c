@@ -602,6 +602,7 @@ static int mycam_notifier_complete(struct v4l2_async_notifier *notifier)
     //struct my_camera *mycam = container_of(notifier, struct my_camera, notifier);
     struct v4l2_device *v4l2_dev = notifier->v4l2_dev;
     struct v4l2_subdev *sd;
+	int ret = 0;
 
     cam_info("All subdevices have been bound\n");
 	
@@ -610,6 +611,11 @@ static int mycam_notifier_complete(struct v4l2_async_notifier *notifier)
     list_for_each_entry(sd, &v4l2_dev->subdevs, list) {
         cam_info("Found subdevice: %s\n", sd->name);
     }
+
+	ret = v4l2_device_register_subdev_nodes(v4l2_dev);
+	if (ret) {
+		cam_err("Failed to register device node for subdevs\n");
+	}
 
     // 在这里可以执行一些后续操作，比如启动流媒体或初始化硬件
     return 0;
