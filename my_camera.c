@@ -25,10 +25,10 @@
 
 // 封装打印函数
 #define cam_info(fmt, ...) \
-    pr_info(TAG "%s " fmt, __func__, ##__VA_ARGS__)
+    pr_info(TAG "%s: " fmt, __func__, ##__VA_ARGS__)
 
 #define cam_err(fmt, ...) \
-    pr_err(TAG "%s " fmt, __func__, ##__VA_ARGS__)
+    pr_err(TAG "%s: " fmt, __func__, ##__VA_ARGS__)
 
 
 // 定义图像格式
@@ -590,7 +590,7 @@ static int mycam_notifier_bound(struct v4l2_async_notifier *notifier,
     cam_info("Subdevice '%s' bound to main device\n", subdev->name);
 
 	// 可以在这里保存子设备指针（如 sensor 子设备）
-    if (!strcmp(subdev->name, "sensor_subdev")) {
+    if (!strcmp(subdev->name, "my_sensor_subdev")) {
         mycam->sensor_subdev = subdev;
     }
 
@@ -600,8 +600,16 @@ static int mycam_notifier_bound(struct v4l2_async_notifier *notifier,
 static int mycam_notifier_complete(struct v4l2_async_notifier *notifier)
 {
     //struct my_camera *mycam = container_of(notifier, struct my_camera, notifier);
+    struct v4l2_device *v4l2_dev = notifier->v4l2_dev;
+    struct v4l2_subdev *sd;
 
     cam_info("All subdevices have been bound\n");
+	
+
+    // 遍历 v4l2_device 的子设备链表
+    list_for_each_entry(sd, &v4l2_dev->subdevs, list) {
+        cam_info("Found subdevice: %s\n", sd->name);
+    }
 
     // 在这里可以执行一些后续操作，比如启动流媒体或初始化硬件
     return 0;

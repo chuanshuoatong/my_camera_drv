@@ -9,10 +9,10 @@
 
 // 封装打印函数
 #define isp_info(fmt, ...) \
-    pr_info(TAG "%s " fmt, __func__, ##__VA_ARGS__)
+    pr_info(TAG "%s: " fmt, __func__, ##__VA_ARGS__)
 
 #define isp_err(fmt, ...) \
-    pr_err(TAG "%s " fmt, __func__, ##__VA_ARGS__)
+    pr_err(TAG "%s: " fmt, __func__, ##__VA_ARGS__)
 
 
 // ISP 子设备的操作函数
@@ -60,6 +60,7 @@ static int my_isp_probe(struct platform_device *pdev)
 	
     isp_info("\n");
 
+
 	// 给私有数据结构分配内存
 	myisp = devm_kzalloc(&pdev->dev, sizeof(*myisp), GFP_KERNEL);
 	if (!myisp)	
@@ -76,6 +77,11 @@ static int my_isp_probe(struct platform_device *pdev)
 	myisp->sd.owner = THIS_MODULE;
 	snprintf(myisp->sd.name, sizeof(myisp->sd.name), "my_isp_subdev");
 
+
+	// 将私有数据与subdev关联
+	v4l2_set_subdevdata(&myisp->sd, pdev);
+	
+
 	isp_info("ok\n");
 	
     return 0;
@@ -87,10 +93,16 @@ static int my_isp_remove(struct platform_device *pdev)
 	
     isp_info("\n");
 
+
 	if (!myisp) {
 		isp_err("Private data structure is NULL\n");
         return -ENODEV;
 	}
+
+
+	// 清理私有数据
+	v4l2_set_subdevdata(&myisp->sd, NULL);
+
 
 	isp_info("ok\n");
 	

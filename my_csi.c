@@ -9,10 +9,10 @@
 
 // 封装打印函数
 #define csi_info(fmt, ...) \
-    pr_info(TAG "%s " fmt, __func__, ##__VA_ARGS__)
+    pr_info(TAG "%s: " fmt, __func__, ##__VA_ARGS__)
 
 #define csi_err(fmt, ...) \
-    pr_err(TAG "%s " fmt, __func__, ##__VA_ARGS__)
+    pr_err(TAG "%s: " fmt, __func__, ##__VA_ARGS__)
 
 
 // CSI 子设备的操作函数
@@ -47,6 +47,7 @@ static int my_csi_probe(struct platform_device *pdev)
 	
     csi_info("\n");
 
+
 	// 给私有数据结构分配内存
 	mycsi = devm_kzalloc(&pdev->dev, sizeof(*mycsi), GFP_KERNEL);
 	if (!mycsi)
@@ -63,6 +64,11 @@ static int my_csi_probe(struct platform_device *pdev)
     mycsi->sd.owner = THIS_MODULE;
     snprintf(mycsi->sd.name, sizeof(mycsi->sd.name), "my_csi_subdev");
 
+
+	// 将私有数据与subdev关联
+	v4l2_set_subdevdata(&mycsi->sd, pdev);
+	
+
 	csi_info("ok\n");
 	
     return 0;
@@ -74,11 +80,17 @@ static int my_csi_remove(struct platform_device *pdev)
 	
     csi_info("\n");
 
+
 	if (!mycsi) {
 		csi_err("Private data structure is NULL\n");
         return -ENODEV;
 	}
 
+
+	// 清理私有数据
+	v4l2_set_subdevdata(&mycsi->sd, NULL);
+
+	
 	csi_info("ok\n");
 	
 	return 0;
