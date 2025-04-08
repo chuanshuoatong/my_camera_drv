@@ -13,6 +13,10 @@
 #include <media/v4l2-event.h>
 #include <linux/platform_device.h>
 #include <media/videobuf2-dma-contig.h>
+#include <linux/of_platform.h>
+#include "my_camera.h"
+#include "my_isp.h"
+#include "my_csi.h"
 
 
 // 定义 TAG
@@ -50,8 +54,8 @@ struct my_camera {
 	unsigned field;
 	unsigned sequence;
 
-	struct v4l2_subdev isp_subdev;
-	struct v4l2_subdev csi_subdev;
+	struct v4l2_subdev *isp_subdev;
+	struct v4l2_subdev *csi_subdev;
 };
 
 
@@ -64,72 +68,6 @@ static inline struct mycam_buffer *to_mycam_buffer(struct vb2_v4l2_buffer *vbuf)
 {
 	return container_of(vbuf, struct mycam_buffer, vb);
 }
-
-
-// ISP 子设备的操作函数
-static int isp_s_power(struct v4l2_subdev *sd, int on)
-{
-    cam_info("ISP: s_power called with on=%d\n", on);
-    return 0;
-}
-
-static int isp_s_stream(struct v4l2_subdev *sd, int enable)
-{
-    cam_info("ISP: s_stream called with enable=%d\n", enable);
-    return 0;
-}
-
-static int isp_set_fmt(struct v4l2_subdev *sd, struct v4l2_subdev_pad_config *cfg,
-                       struct v4l2_subdev_format *format)
-{
-    cam_info("ISP: set_fmt called\n");
-    return 0;
-}
-
-static const struct v4l2_subdev_core_ops isp_core_ops = {
-    .s_power = isp_s_power,
-};
-
-static const struct v4l2_subdev_video_ops isp_video_ops = {
-    .s_stream = isp_s_stream,
-};
-
-static const struct v4l2_subdev_pad_ops isp_pad_ops = {
-    .set_fmt = isp_set_fmt,
-};
-
-static const struct v4l2_subdev_ops isp_ops = {
-    .core = &isp_core_ops,
-    .video = &isp_video_ops,
-    .pad = &isp_pad_ops,
-};
-
-
-// CSI 子设备的操作函数
-static int csi_s_power(struct v4l2_subdev *sd, int on)
-{
-    cam_info("CSI: s_power called with on=%d\n", on);
-    return 0;
-}
-
-static int csi_s_stream(struct v4l2_subdev *sd, int enable)
-{
-    cam_info("CSI: s_stream called with enable=%d\n", enable);
-    return 0;
-}
-
-static const struct v4l2_subdev_core_ops csi_core_ops = {
-    .s_power = csi_s_power,
-};
-
-static const struct v4l2_subdev_video_ops csi_video_ops = {
-    .s_stream = csi_s_stream,
-};
-
-static const struct v4l2_subdev_ops csi_ops = {
-    .core = &csi_core_ops,
-    .video = &csi_video_ops,
-};
 
 
 // v4l2_ioctl_ops 的回调函数实现
@@ -560,6 +498,85 @@ void video_device_release(struct video_device *vdev)
 }
 
 
+static int mycam_register_subdevs(struct platform_device *pdev)
+{
+	struct my_camera *mycam = platform_get_drvdata(pdev);
+	struct device_node *isp_node = NULL, *csi_node = NULL;
+	struct platform_device *isp_pdev = NULL, *csi_pdev = NULL;
+	struct my_isp *myisp = NULL;
+	struct my_csi *mycsi = NULL;
+	int ret = 0;
+
+	cam_info("\n");
+
+
+	// 解析并绑定 ISP subdev
+	isp_node = of_parse_phandle(pdev->dev.of_node, "isp-subdev", 0);
+	if (!isp_node) {
+		cam_err("Failed to find the device_node by isp-subdev\n");
+		return -ENODEV;
+	}
+	
+	isp_pdev = of_find_device_by_node(isp_node);
+	if (!isp_pdev) {
+		cam_err("Failed to find the platform_device by isp-subdev\n");
+		of_node_put(isp_node);
+		return -ENODEV;
+	}
+	
+	myisp = platform_get_drvdata(isp_pdev);
+	if (!myisp || !myisp->sd.name[0]) {
+		cam_err("Failed to get ISP subdev\n");
+		of_node_put(isp_node);
+		return -ENODEV;
+	}
+	
+	ret = v4l2_device_register_subdev(&mycam->v4l2_dev, &myisp->sd);
+	if (ret) {
+		cam_err("Failed to register ISP subdev\n");
+		of_node_put(isp_node);
+		return -ENODEV;
+	}
+	cam_info("ISP subdev bound and registered: %s\n", myisp->sd.name);
+	mycam->isp_subdev = &myisp->sd;
+
+
+
+	// 解析并绑定 CSI subdev
+	csi_node = of_parse_phandle(pdev->dev.of_node, "csi-subdev", 0);
+	if (!csi_node) {
+		cam_err("Failed to find the device_node by csi-subdev\n");
+		return -ENODEV;
+	}
+	
+	csi_pdev = of_find_device_by_node(csi_node);
+	if (!csi_pdev) {
+		cam_err("Failed to find the platform_device by csi-subdev\n");
+		of_node_put(csi_node);
+		return -ENODEV;
+	}
+	
+	mycsi = platform_get_drvdata(csi_pdev);
+	if (!mycsi || !mycsi->sd.name[0]) {
+		cam_err("Failed to get CSI subdev\n");
+		of_node_put(csi_node);
+		return -ENODEV;
+	}
+	
+	ret = v4l2_device_register_subdev(&mycam->v4l2_dev, &mycsi->sd);
+	if (ret) {
+		cam_err("Failed to register CSI subdev\n");
+		of_node_put(csi_node);
+		return -ENODEV;
+	}
+	cam_info("CSI subdev bound and registered: %s\n", mycsi->sd.name);
+	mycam->csi_subdev = &mycsi->sd;
+
+	cam_info("ok\n");
+
+	return 0;
+}
+
 static int my_camera_probe(struct platform_device *pdev)
 {
     int ret;
@@ -569,7 +586,6 @@ static int my_camera_probe(struct platform_device *pdev)
 
 	cam_info("\n");
 
-
 	// 初始化私有数据结构
 	mycam = devm_kzalloc(&pdev->dev, sizeof(struct my_camera), GFP_KERNEL);
 	if (!mycam) {
@@ -578,50 +594,29 @@ static int my_camera_probe(struct platform_device *pdev)
 	mycam->pdev = pdev;
 	platform_set_drvdata(pdev, mycam);
 
-
 	// 初始化锁
 	mutex_init(&mycam->lock);
 
-
-	// Fill in the initial format-related settings
+	// 填充初始格式相关设置
 	mycam_fill_pix_format(mycam, &mycam->format);
 	
-
     // 注册 v4l2_device
     strscpy(mycam->v4l2_dev.name, "my_v4l2_device", sizeof(mycam->v4l2_dev.name));
     ret = v4l2_device_register(&pdev->dev, &mycam->v4l2_dev);
     if (ret) {
-        cam_err("Failed to register v4l2_device\n");
-        goto err_cleanup;
+        cam_err("Failed to register v4l2_device, ret=%d\n", ret);
+        goto err_exit;
     }
     cam_info("v4l2_device registered: %s\n", mycam->v4l2_dev.name);
 
+	// 解析绑定 subdev
+	ret = mycam_register_subdevs(pdev);
+	if (ret) {
+		cam_err("Failed to register subdevs, ret=%d\n", ret);
+		goto err_unregister_v4l2_dev;
+	}
 
-    // 初始化 ISP 子设备
-    v4l2_subdev_init(&mycam->isp_subdev, &isp_ops);
-    mycam->isp_subdev.owner = THIS_MODULE;
-    snprintf(mycam->isp_subdev.name, sizeof(mycam->isp_subdev.name), "my_isp_subdev");
-    ret = v4l2_device_register_subdev(&mycam->v4l2_dev, &mycam->isp_subdev);
-    if (ret) {
-        cam_err("Failed to register isp_subdev\n");
-        goto err_isp;
-    }
-    cam_info("ISP subdev registered\n");
-	
-
-    // 初始化 CSI 子设备
-    v4l2_subdev_init(&mycam->csi_subdev, &csi_ops);
-    mycam->csi_subdev.owner = THIS_MODULE;
-    snprintf(mycam->csi_subdev.name, sizeof(mycam->csi_subdev.name), "my_csi_subdev");
-    ret = v4l2_device_register_subdev(&mycam->v4l2_dev, &mycam->csi_subdev);
-    if (ret) {
-        cam_err("Failed to register csi_subdev\n");
-        goto err_csi;
-    }
-    cam_info("CSI subdev registered\n");
-
-
-	// Initialize the vb2 queue
+	// 初始化 vb2_queue
 	q = &mycam->queue;
 	q->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 	q->io_modes = VB2_MMAP | VB2_DMABUF | VB2_READ;
@@ -631,34 +626,17 @@ static int my_camera_probe(struct platform_device *pdev)
 	q->ops = &mycam_qops;
 	q->mem_ops = &vb2_dma_contig_memops;
 	q->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
-	/*
-	 * Assume that this DMA engine needs to have at least two buffers
-	 * available before it can be started. The start_streaming() op
-	 * won't be called until at least this many buffers are queued up.
-	 */
 	q->min_buffers_needed = 2;
-	/*
-	 * The serialization lock for the streaming ioctls. This is the same
-	 * as the main serialization lock, but if some of the non-streaming
-	 * ioctls could take a long time to execute, then you might want to
-	 * have a different lock here to prevent VIDIOC_DQBUF from being
-	 * blocked while waiting for another action to finish. This is
-	 * generally not needed for PCI devices, but USB devices usually do
-	 * want a separate lock here.
-	 */
 	q->lock = &mycam->lock;
-	/*
-	 * Since this driver can only do 32-bit DMA we must make sure that
-	 * the vb2 core will allocate the buffers in 32-bit DMA memory.
-	 */
 	q->gfp_flags = GFP_DMA32;
 	ret = vb2_queue_init(q);
-	if (ret)
-		goto err_video_dev;
+	if (ret) {
+		cam_err("Failed to init vb2_queue, ret=%d\n", ret);
+		goto err_unregister_subdevs;
+	}
 
 	INIT_LIST_HEAD(&mycam->buf_list);
 	spin_lock_init(&mycam->qlock);
-
 
     // 初始化 video_device 节点
     vdev = &mycam->vdev;
@@ -674,26 +652,23 @@ static int my_camera_probe(struct platform_device *pdev)
     ret = video_register_device(vdev, VFL_TYPE_GRABBER, -1);
     if (ret) {
         cam_err("Failed to register video_device, ret=%d\n", ret);
-        goto err_video_reg;
+        goto err_release_vb2_queue;
     }
 	
     cam_info("video_device registered: /dev/video%d\n", vdev->num);
 
-	cam_info("exit\n");
+	cam_info("ok\n");
 
     return 0;
-
-err_video_reg:
-    // 不需要调用 video_device_release()，V4L2 核心会管理 video_device 的生命周期
-err_video_dev:
-	vb2_queue_release(q);								// 释放 VB2 资源
-    v4l2_device_unregister_subdev(&mycam->csi_subdev); 	// 注销 CSI 子设备
-err_csi:
-    v4l2_device_unregister_subdev(&mycam->isp_subdev); 	// 注销 ISP 子设备
-err_isp:
-    v4l2_device_unregister(&mycam->v4l2_dev); 			// 注销 v4l2_device
-err_cleanup:
-	// 这里不需要手动释放 mycam 的内存，devm_kzalloc 分配的会在设备卸载时自动释放
+	
+err_release_vb2_queue:
+	vb2_queue_release(q);
+err_unregister_subdevs:
+	v4l2_device_unregister_subdev(mycam->isp_subdev);
+	v4l2_device_unregister_subdev(mycam->csi_subdev);
+err_unregister_v4l2_dev:
+	v4l2_device_unregister(&mycam->v4l2_dev);
+err_exit:
 	return ret;
 }
 
@@ -708,29 +683,33 @@ static int my_camera_remove(struct platform_device *pdev)
         return -ENODEV;
 	}
 
-    // 注销 video_device
-    if (mycam->vdev.name[0] != '\0') { // 检查是否已注册。这里不能判断 &mycam->vdev 是否为空，因为地址永远不为空
-        video_unregister_device(&mycam->vdev);
-        cam_info("video_device unregistered\n");
-    }
-
-    // 注销 CSI 子设备
-    v4l2_device_unregister_subdev(&mycam->csi_subdev);
-    cam_info("CSI subdev unregistered\n");
-
-    // 注销 ISP 子设备
-    v4l2_device_unregister_subdev(&mycam->isp_subdev);
-    cam_info("ISP subdev unregistered\n");
-
-    // 注销 v4l2_device
-    v4l2_device_unregister(&mycam->v4l2_dev);
-    cam_info("v4l2_device unregistered\n");
+	// 注销 video_device
+	if (video_is_registered(&mycam->vdev)) {
+		video_unregister_device(&mycam->vdev);
+		cam_info("Unregistered video_device: /dev/video%d\n", mycam->vdev.num);
+	}
 
 	// 释放 VB2 资源
 	vb2_queue_release(&mycam->queue);
-	cam_info("VB2 queue released\n");
+	cam_info("Released vb2_queue\n");
+
+
+	if (mycam->isp_subdev) {
+		v4l2_device_unregister_subdev(mycam->isp_subdev);
+		cam_info("Unregistered isp_subdev\n");
+	}
+
+	if (mycam->csi_subdev) {
+		v4l2_device_unregister_subdev(mycam->csi_subdev);
+		cam_info("Unregistered csi_subdev\n");
+	}
+
+    // 注销 v4l2_device
+    v4l2_device_unregister(&mycam->v4l2_dev);
+    cam_info("Unregistered v4l2_device: %s\n", mycam->v4l2_dev.name);
+
+	cam_info("ok\n");
 	
-	cam_info("exit\n");
     return 0;
 }
 

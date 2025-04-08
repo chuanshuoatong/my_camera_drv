@@ -2,6 +2,7 @@
 #include <linux/platform_device.h>
 #include <linux/of.h>
 #include <linux/string.h>
+#include "my_sensor.h"
 
 // 定义 TAG
 #define TAG "[my_sensor_drv]: "
@@ -17,12 +18,18 @@
 static int my_sensor_probe(struct platform_device *pdev)
 {
     sensor_info("\n");
+
+	sensor_info("ok\n");
+	
     return 0;
 }
 
 static int my_sensor_remove(struct platform_device *pdev)
 {
     sensor_info("\n");
+
+	sensor_info("ok\n");
+	
     return 0;
 }
 
