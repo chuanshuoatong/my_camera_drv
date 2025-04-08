@@ -14,6 +14,7 @@
 #include <linux/platform_device.h>
 #include <media/videobuf2-dma-contig.h>
 #include <linux/of_platform.h>
+#include <linux/of_graph.h>
 #include "my_camera.h"
 #include "my_isp.h"
 #include "my_csi.h"
@@ -39,6 +40,7 @@
 struct my_camera {
 	struct platform_device *pdev;
 	struct v4l2_device v4l2_dev;
+	struct v4l2_async_notifier notifier; // 异步通知链
 	struct video_device vdev;
 	struct v4l2_ctrl_handler ctrl_handler;
 	struct mutex lock;
@@ -56,6 +58,7 @@ struct my_camera {
 
 	struct v4l2_subdev *isp_subdev;
 	struct v4l2_subdev *csi_subdev;
+	struct v4l2_subdev *sensor_subdev;
 };
 
 
@@ -577,6 +580,127 @@ static int mycam_register_subdevs(struct platform_device *pdev)
 	return 0;
 }
 
+
+static int mycam_notifier_bound(struct v4l2_async_notifier *notifier,
+                                struct v4l2_subdev *subdev,
+                                struct v4l2_async_subdev *asd)
+{
+    struct my_camera *mycam = container_of(notifier, struct my_camera, notifier);
+
+    cam_info("Subdevice '%s' bound to main device\n", subdev->name);
+
+	// 可以在这里保存子设备指针（如 sensor 子设备）
+    if (!strcmp(subdev->name, "sensor_subdev")) {
+        mycam->sensor_subdev = subdev;
+    }
+
+    return 0;
+}
+
+static int mycam_notifier_complete(struct v4l2_async_notifier *notifier)
+{
+    //struct my_camera *mycam = container_of(notifier, struct my_camera, notifier);
+
+    cam_info("All subdevices have been bound\n");
+
+    // 在这里可以执行一些后续操作，比如启动流媒体或初始化硬件
+    return 0;
+}
+
+
+static const struct v4l2_async_notifier_operations mycam_notifier_ops = {
+    .bound = mycam_notifier_bound,
+    .complete = mycam_notifier_complete,
+};
+
+static int mycam_parse_dts_remote_node(struct platform_device *pdev, struct device_node **remote_node)
+{
+	struct device_node *node = pdev->dev.of_node;
+    struct device_node *port, *endpoint;
+
+	// 获取本节点中的port节点
+	port = of_get_child_by_name(node, "port");
+	if (!port) {
+		cam_err("Failed to find 'port' node in device tree\n");
+        return -ENODEV;
+	}
+
+	// 获取port节点中的endpoint节点
+	endpoint = of_get_child_by_name(port, "endpoint");
+	if (!endpoint) {
+		cam_err("Failed to find 'endpoint' node in device tree\n");
+		of_node_put(port);
+		return -ENODEV;
+	}
+
+	// 获取endpoint节点中remote-endpoint所指向的endpoint所在的port的父节点
+	*remote_node = of_graph_get_remote_port_parent(endpoint);
+	if (!*remote_node) {
+        cam_err("Failed to get remote node from endpoint\n");
+        of_node_put(endpoint);
+		of_node_put(port);
+        return -ENODEV;
+    }
+	
+	cam_info("Found remote_node: %s\n", (*remote_node)->name);
+
+	// 释放中间节点的引用
+	of_node_put(endpoint);
+	of_node_put(port);
+
+	return 0;
+}
+
+static int mycam_register_async_notifier(struct platform_device *pdev)
+{
+	struct my_camera *mycam  = platform_get_drvdata(pdev);
+    struct device_node *remote_node = NULL;
+    struct v4l2_async_subdev *asd = NULL;
+	int ret = 0;
+
+	cam_info("\n");
+	
+
+	// 1. 初始化异步通知链
+	mycam->notifier.ops = &mycam_notifier_ops;
+    v4l2_async_notifier_init(&mycam->notifier);
+	
+
+	// 解析设备树，获取远端节点
+	ret = mycam_parse_dts_remote_node(pdev, &remote_node);
+	if (ret) {
+		cam_err("Failed to parse remote node, ret=%d\n", ret);
+		goto err_cleanup_notifier;
+	}
+
+
+	// 2. 向通知链中添加需要监听的异步子设备
+	asd = v4l2_async_notifier_add_fwnode_subdev(&mycam->notifier, 
+												of_fwnode_handle(remote_node), 
+												sizeof(struct v4l2_async_subdev));
+	of_node_put(remote_node);
+	
+	if (IS_ERR(asd)) {
+		cam_err("Failed to add async subdev, ret=%ld\n", PTR_ERR(asd));
+        ret = PTR_ERR(asd);
+		goto err_cleanup_notifier;
+	}
+	
+
+	// 3. 向内核注册通知链，内核开始监听
+	ret = v4l2_async_notifier_register(&mycam->v4l2_dev, &mycam->notifier);
+	if (ret) {
+    	cam_err("Failed to register async notifier, ret=%d\n", ret);
+    	goto err_cleanup_notifier;
+	}
+
+	return 0;
+
+err_cleanup_notifier:
+	v4l2_async_notifier_cleanup(&mycam->notifier);
+	return ret;
+}
+
 static int my_camera_probe(struct platform_device *pdev)
 {
     int ret;
@@ -654,13 +778,21 @@ static int my_camera_probe(struct platform_device *pdev)
         cam_err("Failed to register video_device, ret=%d\n", ret);
         goto err_release_vb2_queue;
     }
-	
     cam_info("video_device registered: /dev/video%d\n", vdev->num);
+
+	// 初始化异步通知链
+	ret = mycam_register_async_notifier(pdev);
+	if (ret) {
+		cam_err("Failed to register async notifier, ret=%d\n", ret);
+		goto err_cleanup_notifier;
+	}
 
 	cam_info("ok\n");
 
     return 0;
-	
+
+err_cleanup_notifier:
+	v4l2_async_notifier_cleanup(&mycam->notifier);
 err_release_vb2_queue:
 	vb2_queue_release(q);
 err_unregister_subdevs:
@@ -682,6 +814,11 @@ static int my_camera_remove(struct platform_device *pdev)
         cam_err("Private data structure is NULL\n");
         return -ENODEV;
 	}
+
+	// 注销通知链，清空通知链
+	v4l2_async_notifier_unregister(&mycam->notifier);
+	v4l2_async_notifier_cleanup(&mycam->notifier);
+	cam_info("Unregistered and cleanup notifier\n");
 
 	// 注销 video_device
 	if (video_is_registered(&mycam->vdev)) {
