@@ -281,6 +281,13 @@ static int mycam_vb2_ioctl_qbuf(struct file *file, void *fh, struct v4l2_buffer 
 	return vb2_ioctl_qbuf(file, fh, p);
 }
 
+static int mycam_vb2_ioctl_dqbuf(struct file *file, void *fh, struct v4l2_buffer *p)
+{
+	cam_info("index=%u\n", p->index);
+	
+	return vb2_ioctl_dqbuf(file, fh, p);
+}
+
 static int mycam_vb2_ioctl_streamon(struct file *file, void *fh, enum v4l2_buf_type i)
 {
 	cam_info("\n");
@@ -367,6 +374,7 @@ static void buffer_queue(struct vb2_buffer *vb)
 	list_add_tail(&buf->list, &mycam->buf_list);
 
 	/* TODO: Update any DMA pointers if necessary */
+	// TODO: 把缓冲区的物理地址告诉DMA，以便后续接收传感器数据时直接写入这些缓冲区。
 
 	spin_unlock_irqrestore(&mycam->qlock, flags);
 }
@@ -405,6 +413,13 @@ static int start_streaming(struct vb2_queue *vq, unsigned int count)
 	/* TODO: start DMA */
 	// 主设备通过 v4l2_subdev_call 调用 ISP 子设备的 s_stream 操作。
 
+	if (mycam->sensor_subdev) {
+		ret = v4l2_subdev_call(mycam->sensor_subdev, video, s_stream, 1);
+		if (ret && ret != -ENOIOCTLCMD) {
+            cam_err("Failed to start sensor streaming, ret=%d\n", ret);
+        }
+	}
+
 	if (ret) {
 		/*
 		 * In case of an error, return all active buffers to the
@@ -422,10 +437,18 @@ static int start_streaming(struct vb2_queue *vq, unsigned int count)
 static void stop_streaming(struct vb2_queue *vq)
 {
 	struct my_camera *mycam = vb2_get_drv_priv(vq);
+	int ret = 0;
 
 	cam_info("\n");
 	
 	/* TODO: stop DMA */
+	// 关闭sensor
+	if (mycam->sensor_subdev) {
+		ret = v4l2_subdev_call(mycam->sensor_subdev, video, s_stream, 0);
+		if (ret && ret != -ENOIOCTLCMD) {
+            cam_err("Failed to stop sensor streaming, ret=%d\n", ret);
+        }
+	}
 
 	/* Release all active buffers */
 	return_all_buffers(mycam, VB2_BUF_STATE_ERROR);
@@ -473,7 +496,7 @@ static const struct v4l2_ioctl_ops my_v4l2_ioctl_ops = {
 	.vidioc_create_bufs = vb2_ioctl_create_bufs,
 	.vidioc_querybuf 	= mycam_vb2_ioctl_querybuf,
 	.vidioc_qbuf 		= mycam_vb2_ioctl_qbuf,
-	.vidioc_dqbuf 		= vb2_ioctl_dqbuf,
+	.vidioc_dqbuf 		= mycam_vb2_ioctl_dqbuf,
 	.vidioc_expbuf 		= vb2_ioctl_expbuf,
 	.vidioc_streamon 	= mycam_vb2_ioctl_streamon,
 	.vidioc_streamoff 	= mycam_vb2_ioctl_streamoff,
@@ -589,7 +612,8 @@ static int mycam_notifier_bound(struct v4l2_async_notifier *notifier,
 
     cam_info("Subdevice '%s' bound to main device\n", subdev->name);
 
-	// 可以在这里保存子设备指针（如 sensor 子设备）
+
+	// 这里只需要保存异步子设备的subdev，其它的已经在mycam_register_subdevs中保存了
     if (!strcmp(subdev->name, "my_sensor_subdev")) {
         mycam->sensor_subdev = subdev;
     }
@@ -612,6 +636,7 @@ static int mycam_notifier_complete(struct v4l2_async_notifier *notifier)
         cam_info("Found subdevice: %s\n", sd->name);
     }
 
+	// 为所有子设备创建devnode，前提是子设备的sd.flags中设置了V4L2_SUBDEV_FL_HAS_DEVNODE
 	ret = v4l2_device_register_subdev_nodes(v4l2_dev);
 	if (ret) {
 		cam_err("Failed to register device node for subdevs\n");
