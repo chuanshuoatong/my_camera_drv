@@ -5,6 +5,7 @@
 #include <linux/hrtimer.h>
 #include <linux/ktime.h>
 #include <linux/delay.h>
+#include <linux/dma-mapping.h>
 #include "my_sensor.h"
 
 // 定义 TAG
@@ -44,6 +45,14 @@ static void sensor_work_handler(struct work_struct *work)
     struct my_sensor *mysen = container_of(work, struct my_sensor, work);
     static u64 i = 0;
 
+	sensor_info("\n");
+
+	
+	if (!mysen->fbuffer) {
+		sensor_err("Invalid fbuffer\n");
+		return;
+	}
+
     // 模拟生成一帧数据
 	switch (i % 9) {
 		case 0:
@@ -80,8 +89,7 @@ static void sensor_work_handler(struct work_struct *work)
     // 将数据发送到 CSI
     //send_to_csi(sensor->frame_buffer);
 
-	sensor_info("\n");
-	
+
 	sensor_info("exit\n");
 }
 
@@ -179,13 +187,21 @@ static int my_sensor_probe(struct platform_device *pdev)
 	INIT_WORK(&mysen->work, sensor_work_handler);
 	sensor_info("Work inited\n");
 
-	// 分配fbuffer内存
-	mysen->fbuffer = devm_kzalloc(&pdev->dev, (FRAME_WIDTH * FRAME_HEIGHT * 2), GFP_KERNEL);
-    if (!mysen->fbuffer) {
-        sensor_err("Failed to allocate memory for fbuffer\n");
-        return -ENOMEM;
-    }
-	
+	// 分配fbuffer内存，YUV422，每像素占2Byte
+	//mysen->fbuffer = devm_kzalloc(&pdev->dev, (FRAME_WIDTH * FRAME_HEIGHT * 2), GFP_KERNEL);
+    //if (!mysen->fbuffer) {
+    //    sensor_err("Failed to allocate memory for fbuffer\n");
+    //    return -ENOMEM;
+    //}
+
+	// 给fbuffer分配内存，使用DMA共享内存，YUV422，每像素占2Byte
+	mysen->fbuffer = dma_alloc_coherent(&pdev->dev, (FRAME_WIDTH * FRAME_HEIGHT * 2), &mysen->dma_handle, GFP_KERNEL);
+	if (!mysen->fbuffer) {
+    	sensor_err("Failed to allocate DMA buffer\n");
+    	return -ENOMEM;
+	}
+	sensor_info("Allocate DMA buffer ok, dma_handle=%#x\n", mysen->dma_handle);
+
 
 	sensor_info("ok\n");
 	
@@ -209,6 +225,11 @@ static int my_sensor_remove(struct platform_device *pdev)
 
 	// 确保工作队列中正在被调度的任务完成，取消挂起的
 	cancel_work_sync(&mysen->work);
+
+	if (mysen->fbuffer) {
+        dma_free_coherent(&pdev->dev, (FRAME_WIDTH * FRAME_HEIGHT * 2), mysen->fbuffer, mysen->dma_handle);
+        sensor_info("DMA buffer freed\n");
+    }
 
 	sensor_info("ok\n");
 

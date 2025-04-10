@@ -13,6 +13,8 @@ struct my_sensor {
     struct hrtimer timer;			// 定时器
     struct work_struct work;		// 工作项
     u8 *fbuffer;					// 存放一帧数据
+    dma_addr_t dma_handle;			// 存放DMA物理地址
+    
 };
 
 
