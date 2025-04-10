@@ -34,7 +34,7 @@
 // 定义图像格式
 #define FRAME_WIDTH		1280
 #define FRAME_HEIGHT	720
-#define FRAME_PS		25
+#define FPS		30
 
 
 struct my_camera {
