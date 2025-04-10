@@ -2,6 +2,9 @@
 #include <linux/platform_device.h>
 #include <linux/of.h>
 #include <linux/string.h>
+#include <linux/export.h>
+#include <linux/kthread.h>
+#include <linux/delay.h>
 #include "my_csi.h"
 
 // 定义 TAG
@@ -14,6 +17,11 @@
 #define csi_err(fmt, ...) \
     pr_err(TAG "%s: " fmt, __func__, ##__VA_ARGS__)
 
+
+static dma_addr_t csi_shared_dma_addr = 0;
+static struct wait_queue_head csi_wait_queue;
+static struct task_struct *csi_thread = NULL;
+static bool frame_ready = false;
 
 // CSI 子设备的操作函数
 static int csi_s_power(struct v4l2_subdev *sd, int on)
@@ -41,6 +49,42 @@ static const struct v4l2_subdev_ops csi_subdev_ops = {
     .video 	= &csi_video_ops,
 };
 
+
+void my_csi_notify_frame_ready(void)
+{
+	frame_ready = true;
+	wake_up_process(csi_thread);
+}
+EXPORT_SYMBOL(my_csi_notify_frame_ready);
+
+void my_csi_set_share_buffer_addr(dma_addr_t dma_addr)
+{
+	csi_shared_dma_addr = dma_addr;
+	
+	csi_info("dma_addr=%#x\n", dma_addr);
+}
+EXPORT_SYMBOL(my_csi_set_share_buffer_addr);
+
+
+static int csi_thread_fn(void *data)
+{
+	while (!kthread_should_stop()) {
+
+		wait_event_interruptible_timeout(csi_wait_queue, 
+										 frame_ready || kthread_should_stop(), 
+										 msecs_to_jiffies(1000));
+
+		if (frame_ready) {
+			frame_ready = false;
+			csi_info("frame is ready\n");
+		}
+
+	}
+
+	return 0;
+}
+
+
 static int my_csi_probe(struct platform_device *pdev)
 {
 	struct my_csi *mycsi;
@@ -67,6 +111,18 @@ static int my_csi_probe(struct platform_device *pdev)
 
 	// 将私有数据与subdev关联
 	v4l2_set_subdevdata(&mycsi->sd, pdev);
+
+
+	// 初始化等待队列
+    init_waitqueue_head(&csi_wait_queue);
+
+
+	// 启动内核线程
+    csi_thread = kthread_run(csi_thread_fn, NULL, "csi_thread");
+    if (IS_ERR(csi_thread)) {
+        csi_err("Failed to start CSI thread\n");
+        return PTR_ERR(csi_thread);
+    }
 	
 
 	csi_info("ok\n");
@@ -89,6 +145,13 @@ static int my_csi_remove(struct platform_device *pdev)
 
 	// 清理私有数据
 	v4l2_set_subdevdata(&mycsi->sd, NULL);
+
+
+	// 停掉内核线程
+	if (csi_thread) {
+        kthread_stop(csi_thread);
+        csi_info("CSI thread stopped\n");
+    }
 
 	
 	csi_info("ok\n");

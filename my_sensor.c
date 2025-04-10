@@ -26,6 +26,10 @@
 #define NSECS_PER_SEC 1000000000
 
 
+extern void my_csi_set_share_buffer_addr(dma_addr_t dma_addr);
+extern void my_csi_notify_frame_ready(void);
+
+
 // 生成一帧 YUV422 数据（YUYV 排布）
 static void generate_one_frame_yuyv(uint8_t *buffer, int width, int height, u8 Y, u8 U, u8 V)
 {	
@@ -86,11 +90,9 @@ static void sensor_work_handler(struct work_struct *work)
 	
 	i++;
 
-    // 将数据发送到 CSI
-    //send_to_csi(sensor->frame_buffer);
+	// 通知csi，一帧数据已准备好
+    my_csi_notify_frame_ready();
 
-
-	sensor_info("exit\n");
 }
 
 static enum hrtimer_restart sensor_timer_callback(struct hrtimer *timer)
@@ -201,6 +203,8 @@ static int my_sensor_probe(struct platform_device *pdev)
     	return -ENOMEM;
 	}
 	sensor_info("Allocate DMA buffer ok, dma_handle=%#x\n", mysen->dma_handle);
+	// 将DMA物理地址高速CSI
+	my_csi_set_share_buffer_addr(mysen->dma_handle);
 
 
 	sensor_info("ok\n");
