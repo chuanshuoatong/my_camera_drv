@@ -139,31 +139,16 @@ int main() {
         return -1;
     }
 	printf("VIDIOC_DQBUF\n\n");
-	goto EXIT_1;
 
-    // 保存为 BMP 文件
-    FILE *file = fopen("output.bmp", "wb");
+    // 保存为 YUV 文件
+    FILE *file = fopen("output.yuv", "wb");
     if (!file) {
         perror("无法创建文件");
         close(fd);
         return -1;
     }
 
-    // 写入 BMP 文件头
-    unsigned char bmp_header[54] = {
-        0x42, 0x4D, 0x36, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x36, 0x00, 0x00, 0x00,
-        0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00,
-        0x18, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-    };
-    bmp_header[2] = (buf.length + 54) & 0xFF;
-    bmp_header[3] = ((buf.length + 54) >> 8) & 0xFF;
-    bmp_header[18] = WIDTH & 0xFF;
-    bmp_header[19] = (WIDTH >> 8) & 0xFF;
-    bmp_header[22] = HEIGHT & 0xFF;
-    bmp_header[23] = (HEIGHT >> 8) & 0xFF;
-
-    fwrite(bmp_header, 1, 54, file);
+    // 写入原始 YUV 数据
     fwrite(buffers[buf.index], 1, buf.length, file);
     fclose(file);
 
@@ -180,9 +165,6 @@ int main() {
     // 关闭设备
     close(fd);
 
-    printf("图像已保存为 output.bmp\n");
+    printf("图像已保存为 output.yuv\n");
     return 0;
-	
-EXIT_1:
-	return 0;
 }

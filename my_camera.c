@@ -419,6 +419,10 @@ static int start_streaming(struct vb2_queue *vq, unsigned int count)
 {
 	struct my_camera *mycam = vb2_get_drv_priv(vq);
 	int ret = 0;
+	unsigned long flags;
+	struct mycam_buffer *buf = NULL;
+	struct vb2_buffer *vb = NULL;
+	void *vaddr = NULL;
 
 	mycam->sequence = 0;
 
@@ -434,8 +438,28 @@ static int start_streaming(struct vb2_queue *vq, unsigned int count)
         }
 	}
 
-	
-	
+
+#if 1
+	spin_lock_irqsave(&mycam->qlock, flags);
+	buf = list_first_entry(&mycam->buf_list, struct mycam_buffer, list);
+	vb = &buf->vb.vb2_buf;
+	list_del(&buf->list);
+	spin_unlock_irqrestore(&mycam->qlock, flags);
+
+	vaddr = vb2_plane_vaddr(vb, 0);
+	if (!vaddr) {
+        cam_err("Failed to get virtual address of the buffer\n");
+        vb2_buffer_done(vb, VB2_BUF_STATE_ERROR);
+        return -EINVAL;
+    }
+	cam_info("vaddr=%p\n", vaddr);
+
+	cam_info("vb->planes[0].length=%d\n", vb->planes[0].length);
+	memset(vaddr, 128, vb->planes[0].length);
+	vb2_set_plane_payload(vb, 0, vb->planes[0].length);
+	vb2_buffer_done(vb, VB2_BUF_STATE_DONE);
+#endif	
+
 
 	if (ret) {
 		/*
