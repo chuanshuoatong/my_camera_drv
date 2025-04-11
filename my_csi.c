@@ -23,6 +23,7 @@ static struct wait_queue_head csi_wait_queue;
 static struct task_struct *csi_thread = NULL;
 static bool frame_ready = false;
 
+
 // CSI 子设备的操作函数
 static int csi_s_power(struct v4l2_subdev *sd, int on)
 {
@@ -77,6 +78,23 @@ static int csi_thread_fn(void *data)
 		if (frame_ready) {
 			frame_ready = false;
 			csi_info("frame is ready\n");
+
+			/* TODO: 从 csi_shared_dma_addr 指向的DMA物理地址中取出帧数据。
+			   注意这里会涉及同步问题，即取数据的过程中，	DMA buffer中的数据
+			   可能会被覆盖掉。因为作为生产者的sensor不会等待csi取完后再产生
+			   新数据，而是源源不断地产生，这也符合真实的硬件行为。
+			   如果加上同步操作，那么这里取数据一旦超时，会阻塞sensor的生产，
+			   这不是我们期望的。所以，这里不加同步，那么就要保证取数据的及时。
+			   综上，考虑使用DMA。为什么可以使用DMA？
+			   首先，作为源地址的 csi_shared_dma_addr 指向的物理内存是 dma_alloc_coherent 分配的，
+			   是连续内存，可以支持DMA访问；
+			   其次，作为目的地址的 vb2_buffer，是由 vb2_dma_contig_memops 管理的，
+			   同样是连续内存，且支持DMA访问。
+			   所以，这里可以将数据传输交给DMA Engine。
+			*/
+
+			
+			
 		}
 
 	}

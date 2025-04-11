@@ -366,15 +366,29 @@ static void buffer_queue(struct vb2_buffer *vb)
 	struct my_camera *mycam = vb2_get_drv_priv(vb->vb2_queue);
 	struct mycam_buffer *buf = to_mycam_buffer(vbuf);
 	unsigned long flags = 0;
+	dma_addr_t phys_addr = 0;
+	void *vaddr = NULL;
 
+	
 	// vb/vbuf/buf 三者地址应该一样
 	cam_info("index=%u, vb2_buffer=%p, vbuf=%p, buf=%p\n", vb->index, vb, vbuf, buf);
+
 
 	spin_lock_irqsave(&mycam->qlock, flags);
 	list_add_tail(&buf->list, &mycam->buf_list);
 
+
 	/* TODO: Update any DMA pointers if necessary */
 	// TODO: 把缓冲区的物理地址告诉DMA，以便后续接收传感器数据时直接写入这些缓冲区。
+	
+	// 获取当前vb2_buffer中，DMA内存区域的物理地址
+	phys_addr = vb2_dma_contig_plane_dma_addr(vb, 0);
+	cam_info("phys_addr=%pad\n", &phys_addr);
+
+	// 获取当前vb2_buffer中，DMA内存区域的虚拟地址。不能使用virt_to_phys(vaddr)
+	vaddr = vb2_plane_vaddr(vb, 0);
+	cam_info("vaddr=%p\n", vaddr);
+
 
 	spin_unlock_irqrestore(&mycam->qlock, flags);
 }
@@ -419,6 +433,9 @@ static int start_streaming(struct vb2_queue *vq, unsigned int count)
             cam_err("Failed to start sensor streaming, ret=%d\n", ret);
         }
 	}
+
+	
+	
 
 	if (ret) {
 		/*
