@@ -19,7 +19,6 @@
 #include "my_isp.h"
 #include "my_csi.h"
 
-
 // 定义 TAG
 #define TAG "[my_camera_drv]: "
 
@@ -30,12 +29,13 @@
 #define cam_err(fmt, ...) \
     pr_err(TAG "%s: " fmt, __func__, ##__VA_ARGS__)
 
+#define cam_dbg(fmt, ...) \
 
 // 定义图像格式
-#define FRAME_WIDTH		1280
-#define FRAME_HEIGHT	720
-#define FPS		30
-
+#define FRAME_WIDTH			1280
+#define FRAME_HEIGHT		720
+#define FPS 				30
+#define BYTES_PER_PIX_YUYV	2
 
 struct my_camera {
 	struct platform_device *pdev;
@@ -61,17 +61,20 @@ struct my_camera {
 	struct v4l2_subdev *sensor_subdev;
 };
 
-
 struct mycam_buffer {
 	struct vb2_v4l2_buffer vb;
 	struct list_head list;
 };
 
+// 全局变量
+static struct my_camera *g_mycam = NULL;
+
+extern void my_csi_register_pop_vb2buf_cb(void *cb);
+
 static inline struct mycam_buffer *to_mycam_buffer(struct vb2_v4l2_buffer *vbuf)
 {
 	return container_of(vbuf, struct mycam_buffer, vb);
 }
-
 
 // v4l2_ioctl_ops 的回调函数实现
 static int mycam_querycap(struct file *file, void *priv,
@@ -89,7 +92,6 @@ static int mycam_querycap(struct file *file, void *priv,
 	return 0;
 }
 
-
 static void mycam_fill_pix_format(struct my_camera *mycam,
 				     struct v4l2_pix_format *pix)
 {
@@ -103,11 +105,10 @@ static void mycam_fill_pix_format(struct my_camera *mycam,
 	 * The YUYV format is four bytes for every two pixels, so bytesperline
 	 * is width * 2.
 	 */
-	pix->bytesperline = pix->width * 2;
+	pix->bytesperline = pix->width * BYTES_PER_PIX_YUYV;
 	pix->sizeimage    = pix->bytesperline * pix->height;
 	pix->priv         = 0;
 }
-
 
 // 视频格式相关
 static int mycam_try_fmt_vid_cap(struct file *file, void *priv,
@@ -154,8 +155,6 @@ static int mycam_enum_fmt_vid_cap(struct file *file, void *priv,
 	return 0;
 }
 
-
-
 // 模拟电视信号相关的标准，数字摄像头(USB/CSI)不用设置
 static int mycam_s_std(struct file *file, void *priv, v4l2_std_id std)
 {
@@ -174,9 +173,6 @@ static int mycam_querystd(struct file *file, void *priv, v4l2_std_id *std)
 	cam_info("\n");
 	return -EINVAL;
 }
-
-
-
 
 // 摄像头时序参数，对于只支持一种固定的分辨率和帧率，并且这些参数在启动时已经通过其他方式（如 VIDIOC_S_FMT）设置好了，可不实现 dv_timings 相关的回调函数。
 static int mycam_s_dv_timings(struct file *file, void *_fh,
@@ -214,8 +210,6 @@ static int mycam_dv_timings_cap(struct file *file, void *fh,
 	return -EINVAL;
 }
 
-
-
 // 摄像头输入源相关参数，MIPI CSI 摄像头只有一个固定的输入源，可固定成某个值
 static int mycam_enum_input(struct file *file, void *priv,
 			       struct v4l2_input *i)
@@ -244,9 +238,6 @@ static int mycam_g_input(struct file *file, void *priv, unsigned int *i)
 	return 0;
 }
 
-
-
-//
 static int mycam_vb2_ioctl_reqbufs(struct file *file, void *fh, struct v4l2_requestbuffers *req)
 {
     cam_info("type=%u, memory=%u, count=%u\n", req->type, req->memory, req->count);
@@ -259,7 +250,6 @@ static int mycam_vb2_ioctl_reqbufs(struct file *file, void *fh, struct v4l2_requ
 
     return vb2_ioctl_reqbufs(file, fh, req);
 }
-
 
 static int mycam_vb2_ioctl_querybuf(struct file *file, void *fh, struct v4l2_buffer *p)
 {
@@ -283,9 +273,13 @@ static int mycam_vb2_ioctl_qbuf(struct file *file, void *fh, struct v4l2_buffer 
 
 static int mycam_vb2_ioctl_dqbuf(struct file *file, void *fh, struct v4l2_buffer *p)
 {
+	int ret = 0;
+		
+	ret = vb2_ioctl_dqbuf(file, fh, p);
+
 	cam_info("index=%u\n", p->index);
-	
-	return vb2_ioctl_dqbuf(file, fh, p);
+
+	return ret;
 }
 
 static int mycam_vb2_ioctl_streamon(struct file *file, void *fh, enum v4l2_buf_type i)
@@ -300,6 +294,44 @@ static int mycam_vb2_ioctl_streamoff(struct file *file, void *fh, enum v4l2_buf_
 	cam_info("\n");
 
 	return vb2_ioctl_streamoff(file, fh, i);
+}
+
+static struct vb2_buffer *mycam_pop_one_vb2buf(void)
+{
+	struct vb2_buffer *vb = NULL;
+	struct mycam_buffer *buf = NULL;
+	unsigned long flags;
+
+	// 加锁，防止并发操作
+	spin_lock_irqsave(&g_mycam->qlock, flags);
+
+	// 检查链表是否为空
+    if (list_empty(&g_mycam->buf_list)) {
+        cam_err("Buffer list is empty, no available buffer to pop\n");
+        spin_unlock_irqrestore(&g_mycam->qlock, flags);
+        return NULL;
+    }
+
+	// 获取链表中的第一个缓冲区节点
+	buf = list_first_entry(&g_mycam->buf_list, struct mycam_buffer, list);
+	if (!buf) {
+        cam_err("Failed to retrieve buffer from list\n");
+        spin_unlock_irqrestore(&g_mycam->qlock, flags);
+        return NULL;
+    }
+
+	// 成功取到缓冲区节点，从链表中移除
+	list_del(&buf->list);
+
+
+	// 解锁
+	spin_unlock_irqrestore(&g_mycam->qlock, flags);
+
+	// 返回取到的 vb2_buffer
+	vb = &buf->vb.vb2_buf;
+	cam_info("Popped vb2_buffer: %p\n", vb);
+	
+	return vb;
 }
 
 #if 1
@@ -370,26 +402,25 @@ static void buffer_queue(struct vb2_buffer *vb)
 	void *vaddr = NULL;
 
 	
-	// vb/vbuf/buf 三者地址应该一样
-	cam_info("index=%u, vb2_buffer=%p, vbuf=%p, buf=%p\n", vb->index, vb, vbuf, buf);
+	// vb/vbuf/buf 三者地址是一样，它们是嵌套关系
+	cam_info("index=%u, vb=%p\n", vb->index, vb);
 
-
+	// 加锁
 	spin_lock_irqsave(&mycam->qlock, flags);
+
+	// 将buf加入队尾
 	list_add_tail(&buf->list, &mycam->buf_list);
 
-
-	/* TODO: Update any DMA pointers if necessary */
-	// TODO: 把缓冲区的物理地址告诉DMA，以便后续接收传感器数据时直接写入这些缓冲区。
-	
-	// 获取当前vb2_buffer中，DMA内存区域的物理地址
+	// 获取当前vb2_buffer中DMA缓冲区的物理地址
 	phys_addr = vb2_dma_contig_plane_dma_addr(vb, 0);
-	cam_info("phys_addr=%pad\n", &phys_addr);
+	cam_dbg("phys_addr=%pad\n", &phys_addr);
 
-	// 获取当前vb2_buffer中，DMA内存区域的虚拟地址。不能使用virt_to_phys(vaddr)
+	// 获取当前vb2_buffer中DMA缓冲区的虚拟地址。
 	vaddr = vb2_plane_vaddr(vb, 0);
-	cam_info("vaddr=%p\n", vaddr);
+	cam_dbg("vaddr=%p\n", vaddr);
 
 
+	// 解锁
 	spin_unlock_irqrestore(&mycam->qlock, flags);
 }
 
@@ -420,7 +451,7 @@ static int start_streaming(struct vb2_queue *vq, unsigned int count)
 	struct my_camera *mycam = vb2_get_drv_priv(vq);
 	int ret = 0;
 	unsigned long flags;
-	struct mycam_buffer *buf = NULL;
+	struct mycam_buffer *buf = NULL, *node = NULL;
 	struct vb2_buffer *vb = NULL;
 	void *vaddr = NULL;
 
@@ -439,25 +470,45 @@ static int start_streaming(struct vb2_queue *vq, unsigned int count)
 	}
 
 
-#if 1
+#if 0
 	spin_lock_irqsave(&mycam->qlock, flags);
-	buf = list_first_entry(&mycam->buf_list, struct mycam_buffer, list);
-	vb = &buf->vb.vb2_buf;
-	list_del(&buf->list);
+	list_for_each_entry_safe(buf, node, &mycam->buf_list, list) {
+
+		// 从链表中移除当前缓冲区
+		list_del(&buf->list);
+	#if 1		
+		// 获取 vb2_buffer
+		vb = &buf->vb.vb2_buf;
+
+		// 获取缓冲区的虚拟地址
+		vaddr = vb2_plane_vaddr(vb, 0);
+		if (!vaddr) {
+			cam_err("Failed to get virtual address of the buffer\n");
+			vb2_buffer_done(vb, VB2_BUF_STATE_ERROR);
+			goto next_buffer;
+		}
+		cam_info("vaddr=%p\n", vaddr);
+
+		// 填充数据
+		if (vb->index == 0) 
+			memset(vaddr, 64, vb->planes[0].length);
+		if (vb->index == 1) 
+			memset(vaddr, 128, vb->planes[0].length);
+		if (vb->index == 2) 
+			memset(vaddr, 160, vb->planes[0].length);
+		if (vb->index == 3) 
+			memset(vaddr, 200, vb->planes[0].length);
+	#endif
+		// 设置有效载荷大小
+		vb2_set_plane_payload(vb, 0, vb->planes[0].length);
+
+		// 标记缓冲区为完成状态，能被DQ到
+		vb2_buffer_done(vb, VB2_BUF_STATE_DONE);
+
+next_buffer:
+		;
+	}
 	spin_unlock_irqrestore(&mycam->qlock, flags);
-
-	vaddr = vb2_plane_vaddr(vb, 0);
-	if (!vaddr) {
-        cam_err("Failed to get virtual address of the buffer\n");
-        vb2_buffer_done(vb, VB2_BUF_STATE_ERROR);
-        return -EINVAL;
-    }
-	cam_info("vaddr=%p\n", vaddr);
-
-	cam_info("vb->planes[0].length=%d\n", vb->planes[0].length);
-	memset(vaddr, 128, vb->planes[0].length);
-	vb2_set_plane_payload(vb, 0, vb->planes[0].length);
-	vb2_buffer_done(vb, VB2_BUF_STATE_DONE);
 #endif	
 
 
@@ -511,7 +562,6 @@ static const struct vb2_ops mycam_qops = {
 	.wait_finish		= vb2_ops_wait_finish,
 };
 
-
 static const struct v4l2_ioctl_ops my_v4l2_ioctl_ops = {
 	.vidioc_querycap = mycam_querycap,
 	.vidioc_try_fmt_vid_cap = mycam_try_fmt_vid_cap,
@@ -563,7 +613,6 @@ void video_device_release(struct video_device *vdev)
 	/* Do nothing */
 	/* Only valid when the video_device struct is a static. */
 }
-
 
 static int mycam_register_subdevs(struct platform_device *pdev)
 {
@@ -644,7 +693,6 @@ static int mycam_register_subdevs(struct platform_device *pdev)
 	return 0;
 }
 
-
 static int mycam_notifier_bound(struct v4l2_async_notifier *notifier,
                                 struct v4l2_subdev *subdev,
                                 struct v4l2_async_subdev *asd)
@@ -686,7 +734,6 @@ static int mycam_notifier_complete(struct v4l2_async_notifier *notifier)
     // 在这里可以执行一些后续操作，比如启动流媒体或初始化硬件
     return 0;
 }
-
 
 static const struct v4l2_async_notifier_operations mycam_notifier_ops = {
     .bound = mycam_notifier_bound,
@@ -867,6 +914,10 @@ static int my_camera_probe(struct platform_device *pdev)
 		goto err_cleanup_notifier;
 	}
 
+	g_mycam = mycam;
+
+	my_csi_register_pop_vb2buf_cb(mycam_pop_one_vb2buf);
+
 	cam_info("ok\n");
 
     return 0;
@@ -925,11 +976,13 @@ static int my_camera_remove(struct platform_device *pdev)
     v4l2_device_unregister(&mycam->v4l2_dev);
     cam_info("Unregistered v4l2_device: %s\n", mycam->v4l2_dev.name);
 
+
+	g_mycam = NULL;
+
 	cam_info("ok\n");
 	
     return 0;
 }
-
 
 static const struct of_device_id my_camera_of_match_table[] = {
 	{.compatible = "mycompany,my_camera"},
@@ -945,7 +998,6 @@ static struct platform_driver my_camera_driver = {
     .probe  = my_camera_probe,
     .remove = my_camera_remove,
 };
-
 
 module_platform_driver(my_camera_driver);
 

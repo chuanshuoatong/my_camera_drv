@@ -6,11 +6,15 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <linux/videodev2.h>
+#include <sys/stat.h> // 包含 mkdir 函数
+#include <errno.h>    // 包含 errno 宏
 
 #define WIDTH 		1920
 #define HEIGHT 		1080
 #define NUM_BUFFERS 4
 #define CAMERA_DEV	"/dev/video0"
+
+void save_to_yuv(void *buffer, int len);
 
 int main() {
     int fd;
@@ -129,6 +133,7 @@ int main() {
     }
 	printf("VIDIOC_STREAMON\n\n");
 
+dequeue_buf: 
     // 读取一帧数据
     memset(&buf, 0, sizeof(buf));
     buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -138,19 +143,18 @@ int main() {
         close(fd);
         return -1;
     }
-	printf("VIDIOC_DQBUF\n\n");
+	printf("VIDIOC_DQBUF\n");
 
-    // 保存为 YUV 文件
-    FILE *file = fopen("output.yuv", "wb");
-    if (!file) {
-        perror("无法创建文件");
-        close(fd);
-        return -1;
-    }
-
-    // 写入原始 YUV 数据
-    fwrite(buffers[buf.index], 1, buf.length, file);
-    fclose(file);
+	save_to_yuv(buffers[buf.index], buf.length);
+	
+	if (ioctl(fd, VIDIOC_QBUF, &buf) < 0) {
+		perror("入队缓冲区失败");
+		close(fd);
+		return -1;
+	}
+	printf("VIDIOC_QBUF\n\n");
+	
+	goto dequeue_buf;
 
     // 停止视频流
     if (ioctl(fd, VIDIOC_STREAMOFF, &type) < 0) {
@@ -165,6 +169,37 @@ int main() {
     // 关闭设备
     close(fd);
 
-    printf("图像已保存为 output.yuv\n");
     return 0;
+}
+
+void save_to_yuv(void *buffer, int len)
+{
+	static int i = 0;
+	char filename[32] = {0};
+	const char *output_dir = "/data/output";
+	
+	// 确保目录存在
+    if (mkdir(output_dir, 0777) == -1 && errno != EEXIST) {
+        perror("无法创建目录");
+        return;
+    }
+	
+	snprintf(filename, sizeof(filename), "%s/frame_%07d.yuv", output_dir, i);
+	
+	// 保存为 YUV 文件
+    FILE *file = fopen(filename, "wb");
+    if (!file) {
+        perror("无法创建文件");
+        return ;
+    }
+	
+	// 写入原始 YUV 数据
+    fwrite(buffer, 1, len, file);
+	
+	// 关闭文件
+    fclose(file);
+	
+    printf("SAVED：%s\n", filename);
+	
+	i++;
 }

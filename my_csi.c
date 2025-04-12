@@ -4,7 +4,9 @@
 #include <linux/string.h>
 #include <linux/export.h>
 #include <linux/kthread.h>
-#include <linux/delay.h>
+//#include <linux/delay.h>
+#include <linux/dma-mapping.h>
+#include <media/videobuf2-core.h>
 #include "my_csi.h"
 
 // 定义 TAG
@@ -17,12 +19,15 @@
 #define csi_err(fmt, ...) \
     pr_err(TAG "%s: " fmt, __func__, ##__VA_ARGS__)
 
+#define FRAME_WIDTH			1280
+#define FRAME_HEIGHT		720
+#define FPS 				30
+#define BYTES_PER_PIX_YUYV	2
 
-static dma_addr_t csi_shared_dma_addr = 0;
 static struct wait_queue_head csi_wait_queue;
 static struct task_struct *csi_thread = NULL;
 static bool frame_ready = false;
-
+static struct my_csi *g_mycsi = NULL;
 
 // CSI 子设备的操作函数
 static int csi_s_power(struct v4l2_subdev *sd, int on)
@@ -50,7 +55,6 @@ static const struct v4l2_subdev_ops csi_subdev_ops = {
     .video 	= &csi_video_ops,
 };
 
-
 void my_csi_notify_frame_ready(void)
 {
 	frame_ready = true;
@@ -58,57 +62,112 @@ void my_csi_notify_frame_ready(void)
 }
 EXPORT_SYMBOL(my_csi_notify_frame_ready);
 
-void my_csi_set_share_buffer_addr(dma_addr_t dma_addr)
+void my_csi_register_pop_vb2buf_cb(void *cb)
 {
-	csi_shared_dma_addr = dma_addr;
-	
-	csi_info("dma_addr=%#x\n", dma_addr);
+	if (!g_mycsi || !cb) {
+		csi_err("Invlid pointer\n");
+	} else {
+		g_mycsi->pop_vb2buf_cb = cb;
+		csi_info("Registered pop_vb2buf_cb\n");
+	}
 }
-EXPORT_SYMBOL(my_csi_set_share_buffer_addr);
+EXPORT_SYMBOL(my_csi_register_pop_vb2buf_cb);
 
+// 生成一帧 YUV422 数据（YUYV 排布）
+static void generate_one_frame_yuyv(uint8_t *buffer, int width, int height, u8 Y, u8 U, u8 V)
+{	
+	int c, r;
+	for (r = 0; r < height; r++) {
+        for (c = 0; c < width; c += 2) {
+            buffer[r * width * 2 + c * 2] = Y;     // Y0
+            buffer[r * width * 2 + c * 2 + 2] = Y; // Y1
+            buffer[r * width * 2 + c * 2 + 1] = U; // U
+            buffer[r * width * 2 + c * 2 + 3] = V; // V
+        }
+    }
+}
 
 static int csi_thread_fn(void *data)
 {
+	struct my_csi *mycsi = (struct my_csi *)data;
+	static u64 i = 0;
+	struct vb2_buffer *vb = NULL;
+	void *vaddr = NULL;
+
+	if (!mycsi || !mycsi->fbuffer) {
+		csi_info("Invalid pointer\n");
+		return -EINVAL;
+	}
+	
 	while (!kthread_should_stop()) {
 
 		wait_event_interruptible_timeout(csi_wait_queue, 
 										 frame_ready || kthread_should_stop(), 
 										 msecs_to_jiffies(1000));
-
 		if (frame_ready) {
-			frame_ready = false;
-			csi_info("frame is ready\n");
-
-			/* TODO: 从 csi_shared_dma_addr 指向的DMA物理地址中取出帧数据。
-			   注意这里会涉及同步问题，即取数据的过程中，	DMA buffer中的数据
-			   可能会被覆盖掉。因为作为生产者的sensor不会等待csi取完后再产生
-			   新数据，而是源源不断地产生，这也符合真实的硬件行为。
-			   如果加上同步操作，那么这里取数据一旦超时，会阻塞sensor的生产，
-			   这不是我们期望的。所以，这里不加同步，那么就要保证取数据的及时。
-			   综上，考虑使用DMA。为什么可以使用DMA？
-			   首先，作为源地址的 csi_shared_dma_addr 指向的物理内存是 dma_alloc_coherent 分配的，
-			   是连续内存，可以支持DMA访问；
-			   其次，作为目的地址的 vb2_buffer，是由 vb2_dma_contig_memops 管理的，
-			   同样是连续内存，且支持DMA访问。
-			   所以，这里可以将数据传输交给DMA Engine。
-			*/
-
 			
+			csi_info("Frame is ready\n");
 			
+			frame_ready = false;			
+		
+			// 获取一帧模拟数据，每次更新一种颜色
+			switch (i++ % 9) {
+				case 0:
+					generate_one_frame_yuyv(mycsi->fbuffer, FRAME_WIDTH, FRAME_HEIGHT, 235, 128, 128); 	// white
+					break;
+				case 1:
+					generate_one_frame_yuyv(mycsi->fbuffer, FRAME_WIDTH, FRAME_HEIGHT, 76, 84, 255);	// red
+					break;
+				case 2:
+					generate_one_frame_yuyv(mycsi->fbuffer, FRAME_WIDTH, FRAME_HEIGHT, 168, 102, 221);	// orange
+					break;
+				case 3:
+					generate_one_frame_yuyv(mycsi->fbuffer, FRAME_WIDTH, FRAME_HEIGHT, 210, 16, 146);	// yellow
+					break;
+				case 4:
+					generate_one_frame_yuyv(mycsi->fbuffer, FRAME_WIDTH, FRAME_HEIGHT, 149, 44, 21);	// green
+					break;
+				case 5:
+					generate_one_frame_yuyv(mycsi->fbuffer, FRAME_WIDTH, FRAME_HEIGHT, 41, 240, 110);	// blue
+					break;
+				case 6:
+					generate_one_frame_yuyv(mycsi->fbuffer, FRAME_WIDTH, FRAME_HEIGHT, 72, 187, 155);	// indigo
+					break;
+				case 7:
+					generate_one_frame_yuyv(mycsi->fbuffer, FRAME_WIDTH, FRAME_HEIGHT, 107, 205, 212);	// purple
+					break;
+				case 8:
+					generate_one_frame_yuyv(mycsi->fbuffer, FRAME_WIDTH, FRAME_HEIGHT, 16, 128, 128);	// black
+					break;
+			}
+
+			// 调主设备接口，从buffer链表中取一个vb2_buffer，将模拟数据拷贝过去
+			if (!mycsi->pop_vb2buf_cb) {
+				csi_err("Invalid pop_vb2buf_cb\n");
+			} else {
+				vb = (struct vb2_buffer *)mycsi->pop_vb2buf_cb();
+				if (!vb) {
+					csi_err("No available buffer\n");
+				} else {
+					vaddr = vb2_plane_vaddr(vb, 0);
+					csi_info("vaddr=%p\n", vaddr);
+					
+					memcpy(vaddr, mycsi->fbuffer, (FRAME_WIDTH * FRAME_HEIGHT * BYTES_PER_PIX_YUYV));
+					vb2_set_plane_payload(vb, 0, vb->planes[0].length);
+					vb2_buffer_done(vb, VB2_BUF_STATE_DONE);
+				}
+			}			
 		}
-
 	}
 
 	return 0;
 }
-
 
 static int my_csi_probe(struct platform_device *pdev)
 {
 	struct my_csi *mycsi;
 	
     csi_info("\n");
-
 
 	// 给私有数据结构分配内存
 	mycsi = devm_kzalloc(&pdev->dev, sizeof(*mycsi), GFP_KERNEL);
@@ -133,16 +192,26 @@ static int my_csi_probe(struct platform_device *pdev)
 
 	// 初始化等待队列
     init_waitqueue_head(&csi_wait_queue);
+	
+	
+	// 给fbuffer分配内存，使用DMA共享内存，YUV422，每像素占2Byte
+	mycsi->fbuffer = dma_alloc_coherent(&pdev->dev, (FRAME_WIDTH * FRAME_HEIGHT * BYTES_PER_PIX_YUYV), &mycsi->dma_handle, GFP_KERNEL);
+	if (!mycsi->fbuffer) {
+    	csi_err("Failed to allocate DMA buffer\n");
+    	return -ENOMEM;
+	}
+	csi_info("Allocate DMA buffer ok\n");
 
 
 	// 启动内核线程
-    csi_thread = kthread_run(csi_thread_fn, NULL, "csi_thread");
+    csi_thread = kthread_run(csi_thread_fn, mycsi, "csi_thread");
     if (IS_ERR(csi_thread)) {
         csi_err("Failed to start CSI thread\n");
         return PTR_ERR(csi_thread);
     }
-	
 
+	g_mycsi = mycsi;
+	
 	csi_info("ok\n");
 	
     return 0;
@@ -169,6 +238,13 @@ static int my_csi_remove(struct platform_device *pdev)
 	if (csi_thread) {
         kthread_stop(csi_thread);
         csi_info("CSI thread stopped\n");
+    }
+	
+	
+	// 手动释放dma内存
+	if (mycsi->fbuffer) {
+        dma_free_coherent(&pdev->dev, (FRAME_WIDTH * FRAME_HEIGHT * BYTES_PER_PIX_YUYV), mycsi->fbuffer, mycsi->dma_handle);
+        csi_info("DMA buffer freed\n");
     }
 
 	

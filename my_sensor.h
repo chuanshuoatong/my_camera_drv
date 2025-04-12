@@ -12,9 +12,6 @@ struct my_sensor {
     void *priv_data;       			// 其他私有数据（如寄存器基地址、硬件资源等）
     struct hrtimer timer;			// 定时器
     struct work_struct work;		// 工作项
-    u8 *fbuffer;					// 存放一帧数据
-    dma_addr_t dma_handle;			// 存放DMA物理地址
-    
 };
 
 

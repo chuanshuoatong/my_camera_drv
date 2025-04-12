@@ -38,6 +38,7 @@ EXTRA_CFLAGS += -I$(KERN_DIR)/include \
                 -I$(KERN_DIR)/arch/$(ARCH)/include/generated \
                 -I$(KERN_DIR)/include/uapi
 
+ccflags-y += -Wno-unused-variable
 
 # 编译目标
 obj-m += my_isp.o
