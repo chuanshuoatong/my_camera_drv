@@ -69,7 +69,7 @@ struct mycam_buffer {
 // 全局变量
 static struct my_camera *g_mycam = NULL;
 
-extern void my_csi_register_pop_vb2buf_cb(void *cb);
+extern void my_csi_register_dma_cb(void *cb);
 
 static inline struct mycam_buffer *to_mycam_buffer(struct vb2_v4l2_buffer *vbuf)
 {
@@ -296,11 +296,13 @@ static int mycam_vb2_ioctl_streamoff(struct file *file, void *fh, enum v4l2_buf_
 	return vb2_ioctl_streamoff(file, fh, i);
 }
 
-static struct vb2_buffer *mycam_pop_one_vb2buf(void)
+static void mycam_simulate_dma_transfer(u8 *fbuffer, int len)
+
 {
 	struct vb2_buffer *vb = NULL;
 	struct mycam_buffer *buf = NULL;
 	unsigned long flags;
+	void *vaddr = NULL;
 
 	// 加锁，防止并发操作
 	spin_lock_irqsave(&g_mycam->qlock, flags);
@@ -308,30 +310,39 @@ static struct vb2_buffer *mycam_pop_one_vb2buf(void)
 	// 检查链表是否为空
     if (list_empty(&g_mycam->buf_list)) {
         cam_err("Buffer list is empty, no available buffer to pop\n");
-        spin_unlock_irqrestore(&g_mycam->qlock, flags);
-        return NULL;
+        goto release_lock;
     }
 
 	// 获取链表中的第一个缓冲区节点
 	buf = list_first_entry(&g_mycam->buf_list, struct mycam_buffer, list);
 	if (!buf) {
         cam_err("Failed to retrieve buffer from list\n");
-        spin_unlock_irqrestore(&g_mycam->qlock, flags);
-        return NULL;
+        goto release_lock;
     }
 
 	// 成功取到缓冲区节点，从链表中移除
 	list_del(&buf->list);
 
-
-	// 解锁
-	spin_unlock_irqrestore(&g_mycam->qlock, flags);
-
-	// 返回取到的 vb2_buffer
+	// 获取 vb2_buffer
 	vb = &buf->vb.vb2_buf;
-	cam_info("Popped vb2_buffer: %p\n", vb);
-	
-	return vb;
+	if (!vb) {
+		cam_err("Invalid vb2_buffer\n");
+		goto release_lock;
+	}
+
+	// 获取dma缓冲区虚拟地址
+	vaddr = vb2_plane_vaddr(vb, 0);
+	cam_info("vaddr=%p\n", vaddr);
+
+	// 使用memcpy代替真实的DMA传输
+	memcpy(vaddr, fbuffer, len);
+
+	// 设置载荷大小，并标记缓冲区为完成
+	vb2_set_plane_payload(vb, 0, len);
+	vb2_buffer_done(vb, VB2_BUF_STATE_DONE);
+
+release_lock:
+	spin_unlock_irqrestore(&g_mycam->qlock, flags);
 }
 
 #if 1
@@ -916,7 +927,7 @@ static int my_camera_probe(struct platform_device *pdev)
 
 	g_mycam = mycam;
 
-	my_csi_register_pop_vb2buf_cb(mycam_pop_one_vb2buf);
+	my_csi_register_dma_cb(mycam_simulate_dma_transfer);
 
 	cam_info("ok\n");
 

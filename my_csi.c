@@ -62,16 +62,16 @@ void my_csi_notify_frame_ready(void)
 }
 EXPORT_SYMBOL(my_csi_notify_frame_ready);
 
-void my_csi_register_pop_vb2buf_cb(void *cb)
+void my_csi_register_dma_cb(void *cb)
 {
 	if (!g_mycsi || !cb) {
 		csi_err("Invlid pointer\n");
 	} else {
-		g_mycsi->pop_vb2buf_cb = cb;
-		csi_info("Registered pop_vb2buf_cb\n");
+		g_mycsi->post_to_dma_cb = cb;
+		csi_info("Registered post_to_dma_cb\n");
 	}
 }
-EXPORT_SYMBOL(my_csi_register_pop_vb2buf_cb);
+EXPORT_SYMBOL(my_csi_register_dma_cb);
 
 // 生成一帧 YUV422 数据（YUYV 排布）
 static void generate_one_frame_yuyv(uint8_t *buffer, int width, int height, u8 Y, u8 U, u8 V)
@@ -141,21 +141,11 @@ static int csi_thread_fn(void *data)
 					break;
 			}
 
-			// 调主设备接口，从buffer链表中取一个vb2_buffer，将模拟数据拷贝过去
-			if (!mycsi->pop_vb2buf_cb) {
-				csi_err("Invalid pop_vb2buf_cb\n");
+			// 将帧buffer地址提交给DMA
+			if (!mycsi->post_to_dma_cb) {
+				csi_err("Invalid callback\n");
 			} else {
-				vb = (struct vb2_buffer *)mycsi->pop_vb2buf_cb();
-				if (!vb) {
-					csi_err("No available buffer\n");
-				} else {
-					vaddr = vb2_plane_vaddr(vb, 0);
-					csi_info("vaddr=%p\n", vaddr);
-					
-					memcpy(vaddr, mycsi->fbuffer, (FRAME_WIDTH * FRAME_HEIGHT * BYTES_PER_PIX_YUYV));
-					vb2_set_plane_payload(vb, 0, vb->planes[0].length);
-					vb2_buffer_done(vb, VB2_BUF_STATE_DONE);
-				}
+				mycsi->post_to_dma_cb(mycsi->fbuffer, (FRAME_WIDTH * FRAME_HEIGHT * BYTES_PER_PIX_YUYV));
 			}			
 		}
 	}
