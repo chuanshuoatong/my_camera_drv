@@ -32,7 +32,7 @@ static void sensor_work_handler(struct work_struct *work)
 {
 	//struct my_sensor *mysen = container_of(work, struct my_sensor, work);
 
-	sensor_info("\n");
+	//sensor_info("\n");
 
 	// 通知csi
     my_csi_notify_frame_ready();
@@ -42,7 +42,7 @@ static enum hrtimer_restart sensor_timer_callback(struct hrtimer *timer)
 {
 	struct my_sensor *mysen = container_of(timer, struct my_sensor, timer);
 	
-    sensor_info("\n");
+    //sensor_info("\n");
 
 	// 使用work来处理业务逻辑，避免占用定时器周期 
 	schedule_work(&mysen->work);
@@ -58,7 +58,7 @@ static int sensor_s_stream(struct v4l2_subdev *sd, int enable)
 	struct platform_device *pdev = v4l2_get_subdevdata(sd);
 	struct my_sensor *mysen = platform_get_drvdata(pdev);
 	
-    sensor_info("SENSOR: s_stream called with enable=%d\n", enable);
+    sensor_info("enable=%d\n", enable);
 
 	if (enable) {
 		// 启动内核定时器，模拟帧中断

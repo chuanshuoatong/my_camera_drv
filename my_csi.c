@@ -106,7 +106,7 @@ static int csi_thread_fn(void *data)
 										 msecs_to_jiffies(1000));
 		if (frame_ready) {
 			
-			csi_info("Frame is ready\n");
+			csi_info("Frame is ready, id=%d\n", i);
 			
 			frame_ready = false;			
 		

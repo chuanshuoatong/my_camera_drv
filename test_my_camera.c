@@ -8,13 +8,19 @@
 #include <linux/videodev2.h>
 #include <sys/stat.h> // 包含 mkdir 函数
 #include <errno.h>    // 包含 errno 宏
+#include <signal.h>   // 包含信号处理函数
+#include <time.h>     // 包含高精度时间函数
 
 #define WIDTH 		1920
 #define HEIGHT 		1080
 #define NUM_BUFFERS 4
 #define CAMERA_DEV	"/dev/video0"
 
+static struct timespec curr_frame_ts = {0};
+static struct timespec last_frame_ts = {0};
+
 void save_to_yuv(void *buffer, int len);
+void handle_sigint(int sig);          // 信号处理函数
 
 int main() {
     int fd;
@@ -24,6 +30,10 @@ int main() {
     struct v4l2_buffer buf;
     void *buffers[NUM_BUFFERS];
     __u32 i;
+	double frame_period_ms = 0.0;
+	
+	// 注册信号处理函数以捕获 Ctrl+C
+    signal(SIGINT, handle_sigint);
 
     // 打开设备
     fd = open(CAMERA_DEV, O_RDWR);
@@ -143,7 +153,13 @@ dequeue_buf:
         close(fd);
         return -1;
     }
-	printf("VIDIOC_DQBUF\n");
+	clock_gettime(CLOCK_MONOTONIC, &curr_frame_ts);
+	if (last_frame_ts.tv_sec != 0) {
+		frame_period_ms = (curr_frame_ts.tv_sec - last_frame_ts.tv_sec)*1000 + (curr_frame_ts.tv_nsec - last_frame_ts.tv_nsec)/1e6;
+	}
+	last_frame_ts.tv_sec = curr_frame_ts.tv_sec;
+	last_frame_ts.tv_nsec = curr_frame_ts.tv_nsec;
+	printf("VIDIOC_DQBUF: frame_period=%.3fms\n", frame_period_ms);
 
 	save_to_yuv(buffers[buf.index], buf.length);
 	
@@ -202,4 +218,11 @@ void save_to_yuv(void *buffer, int len)
     printf("SAVED：%s\n", filename);
 	
 	i++;
+}
+
+void handle_sigint(int sig) {
+
+	printf("signal=%d\n", sig);
+    // 退出程序
+    exit(0);
 }

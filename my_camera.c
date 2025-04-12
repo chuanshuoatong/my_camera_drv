@@ -15,6 +15,7 @@
 #include <media/videobuf2-dma-contig.h>
 #include <linux/of_platform.h>
 #include <linux/of_graph.h>
+#include <linux/ktime.h>	// 包含 ktime_get()
 #include "my_camera.h"
 #include "my_isp.h"
 #include "my_csi.h"
@@ -303,6 +304,11 @@ static void mycam_simulate_dma_transfer(u8 *fbuffer, int len)
 	struct mycam_buffer *buf = NULL;
 	unsigned long flags;
 	void *vaddr = NULL;
+	ktime_t start_time, end_time;
+	s64 diff_ns;
+
+	// 记录函数开始时间
+    start_time = ktime_get();
 
 	// 加锁，防止并发操作
 	spin_lock_irqsave(&g_mycam->qlock, flags);
@@ -332,7 +338,6 @@ static void mycam_simulate_dma_transfer(u8 *fbuffer, int len)
 
 	// 获取dma缓冲区虚拟地址
 	vaddr = vb2_plane_vaddr(vb, 0);
-	cam_info("vaddr=%p\n", vaddr);
 
 	// 使用memcpy代替真实的DMA传输
 	memcpy(vaddr, fbuffer, len);
@@ -343,6 +348,11 @@ static void mycam_simulate_dma_transfer(u8 *fbuffer, int len)
 
 release_lock:
 	spin_unlock_irqrestore(&g_mycam->qlock, flags);
+
+	end_time = ktime_get();
+	diff_ns  = ktime_to_ns(ktime_sub(end_time, start_time));
+	
+	cam_dbg("diff_ns=%lld\n", diff_ns);
 }
 
 #if 1
@@ -414,7 +424,7 @@ static void buffer_queue(struct vb2_buffer *vb)
 
 	
 	// vb/vbuf/buf 三者地址是一样，它们是嵌套关系
-	cam_info("index=%u, vb=%p\n", vb->index, vb);
+	cam_info("index=%u\n", vb->index);
 
 	// 加锁
 	spin_lock_irqsave(&mycam->qlock, flags);
@@ -468,7 +478,7 @@ static int start_streaming(struct vb2_queue *vq, unsigned int count)
 
 	mycam->sequence = 0;
 
-	cam_info("\n");
+	cam_info("--------------------------------\n");
 	
 	/* TODO: start DMA */
 	// 主设备通过 v4l2_subdev_call 调用 ISP 子设备的 s_stream 操作。
@@ -479,49 +489,6 @@ static int start_streaming(struct vb2_queue *vq, unsigned int count)
             cam_err("Failed to start sensor streaming, ret=%d\n", ret);
         }
 	}
-
-
-#if 0
-	spin_lock_irqsave(&mycam->qlock, flags);
-	list_for_each_entry_safe(buf, node, &mycam->buf_list, list) {
-
-		// 从链表中移除当前缓冲区
-		list_del(&buf->list);
-	#if 1		
-		// 获取 vb2_buffer
-		vb = &buf->vb.vb2_buf;
-
-		// 获取缓冲区的虚拟地址
-		vaddr = vb2_plane_vaddr(vb, 0);
-		if (!vaddr) {
-			cam_err("Failed to get virtual address of the buffer\n");
-			vb2_buffer_done(vb, VB2_BUF_STATE_ERROR);
-			goto next_buffer;
-		}
-		cam_info("vaddr=%p\n", vaddr);
-
-		// 填充数据
-		if (vb->index == 0) 
-			memset(vaddr, 64, vb->planes[0].length);
-		if (vb->index == 1) 
-			memset(vaddr, 128, vb->planes[0].length);
-		if (vb->index == 2) 
-			memset(vaddr, 160, vb->planes[0].length);
-		if (vb->index == 3) 
-			memset(vaddr, 200, vb->planes[0].length);
-	#endif
-		// 设置有效载荷大小
-		vb2_set_plane_payload(vb, 0, vb->planes[0].length);
-
-		// 标记缓冲区为完成状态，能被DQ到
-		vb2_buffer_done(vb, VB2_BUF_STATE_DONE);
-
-next_buffer:
-		;
-	}
-	spin_unlock_irqrestore(&mycam->qlock, flags);
-#endif	
-
 
 	if (ret) {
 		/*
@@ -542,7 +509,7 @@ static void stop_streaming(struct vb2_queue *vq)
 	struct my_camera *mycam = vb2_get_drv_priv(vq);
 	int ret = 0;
 
-	cam_info("\n");
+	cam_info("++++++++++++++++++++++++++++++++\n");
 	
 	/* TODO: stop DMA */
 	// 关闭sensor
