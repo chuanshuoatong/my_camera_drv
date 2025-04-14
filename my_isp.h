@@ -1,9 +1,7 @@
 #ifndef __MY_ISP_H__
 #define __MY_ISP_H__
 
-
 #include <media/v4l2-subdev.h>
-
 
 // 私有数据结构
 struct my_isp {
@@ -11,7 +9,6 @@ struct my_isp {
     struct v4l2_subdev sd; 			// 子设备的 v4l2_subdev
     void *priv_data;       			// 其他私有数据（如寄存器基地址、硬件资源等）
 };
-
 
 #endif /* __MY_ISP_H__ */
 

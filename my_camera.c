@@ -82,10 +82,12 @@ static int mycam_querycap(struct file *file, void *priv,
 			     struct v4l2_capability *cap)
 {
 	struct my_camera *mycam = video_drvdata(file);
-	
-	//cam_info("Called by %s\n", current->comm); // 打印调用进程的名字
-	cam_info("\n");
 
+	cam_info("\n");
+	
+	// 打印调用进程的名字
+	cam_dbg("Called by %s\n", current->comm);
+	
 	strlcpy(cap->driver, KBUILD_MODNAME, sizeof(cap->driver));
 	strlcpy(cap->card, "mipi-csi", sizeof(cap->card));
 	snprintf(cap->bus_info, sizeof(cap->bus_info), "Platform:%s", mycam->pdev->name);
@@ -355,7 +357,6 @@ release_lock:
 	cam_dbg("diff_ns=%lld\n", diff_ns);
 }
 
-#if 1
 /*
  * Setup the constraints of the queue: besides setting the number of planes
  * per buffer and the size and allocation context of each plane, it also
@@ -523,7 +524,6 @@ static void stop_streaming(struct vb2_queue *vq)
 	/* Release all active buffers */
 	return_all_buffers(mycam, VB2_BUF_STATE_ERROR);
 }
-#endif
 
 /*
  * The vb2 queue ops. Note that since q->lock is set we can use the standard
@@ -603,8 +603,7 @@ static int mycam_register_subdevs(struct platform_device *pdev)
 
 	cam_info("\n");
 
-
-	// 解析并绑定 ISP subdev
+	// 1. 解析并绑定 ISP subdev
 	isp_node = of_parse_phandle(pdev->dev.of_node, "isp-subdev", 0);
 	if (!isp_node) {
 		cam_err("Failed to find the device_node by isp-subdev\n");
@@ -635,8 +634,7 @@ static int mycam_register_subdevs(struct platform_device *pdev)
 	mycam->isp_subdev = &myisp->sd;
 
 
-
-	// 解析并绑定 CSI subdev
+	// 2. 解析并绑定 CSI subdev
 	csi_node = of_parse_phandle(pdev->dev.of_node, "csi-subdev", 0);
 	if (!csi_node) {
 		cam_err("Failed to find the device_node by csi-subdev\n");
@@ -697,7 +695,6 @@ static int mycam_notifier_complete(struct v4l2_async_notifier *notifier)
 
     cam_info("All subdevices have been bound\n");
 	
-
     // 遍历 v4l2_device 的子设备链表
     list_for_each_entry(sd, &v4l2_dev->subdevs, list) {
         cam_info("Found subdevice: %s\n", sd->name);
@@ -765,19 +762,16 @@ static int mycam_register_async_notifier(struct platform_device *pdev)
 
 	cam_info("\n");
 	
-
 	// 1. 初始化异步通知链
 	mycam->notifier.ops = &mycam_notifier_ops;
     v4l2_async_notifier_init(&mycam->notifier);
 	
-
 	// 解析设备树，获取远端节点
 	ret = mycam_parse_dts_remote_node(pdev, &remote_node);
 	if (ret) {
 		cam_err("Failed to parse remote node, ret=%d\n", ret);
 		goto err_cleanup_notifier;
 	}
-
 
 	// 2. 向通知链中添加需要监听的异步子设备
 	asd = v4l2_async_notifier_add_fwnode_subdev(&mycam->notifier, 
@@ -791,7 +785,6 @@ static int mycam_register_async_notifier(struct platform_device *pdev)
 		goto err_cleanup_notifier;
 	}
 	
-
 	// 3. 向内核注册通知链，内核开始监听
 	ret = v4l2_async_notifier_register(&mycam->v4l2_dev, &mycam->notifier);
 	if (ret) {
@@ -939,7 +932,6 @@ static int my_camera_remove(struct platform_device *pdev)
 	vb2_queue_release(&mycam->queue);
 	cam_info("Released vb2_queue\n");
 
-
 	if (mycam->isp_subdev) {
 		v4l2_device_unregister_subdev(mycam->isp_subdev);
 		cam_info("Unregistered isp_subdev\n");
@@ -953,7 +945,6 @@ static int my_camera_remove(struct platform_device *pdev)
     // 注销 v4l2_device
     v4l2_device_unregister(&mycam->v4l2_dev);
     cam_info("Unregistered v4l2_device: %s\n", mycam->v4l2_dev.name);
-
 
 	g_mycam = NULL;
 

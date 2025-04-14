@@ -53,35 +53,29 @@ static const struct v4l2_subdev_ops isp_subdev_ops = {
     .pad 	= &isp_pad_ops,
 };
 
-
 static int my_isp_probe(struct platform_device *pdev)
 {
 	struct my_isp *myisp;
 	
     isp_info("\n");
 
-
 	// 给私有数据结构分配内存
 	myisp = devm_kzalloc(&pdev->dev, sizeof(*myisp), GFP_KERNEL);
 	if (!myisp)	
 		return -ENOMEM;
 
-
 	// 将私有数据结构与pdev关联
 	myisp->pdev = pdev;
 	platform_set_drvdata(pdev, myisp);
-
 
 	// 初始化 v4l2_subdev
 	v4l2_subdev_init(&myisp->sd, &isp_subdev_ops);
 	myisp->sd.owner = THIS_MODULE;
 	snprintf(myisp->sd.name, sizeof(myisp->sd.name), "my_isp_subdev");
 
-
 	// 将私有数据与subdev关联
 	v4l2_set_subdevdata(&myisp->sd, pdev);
 	
-
 	isp_info("ok\n");
 	
     return 0;
@@ -93,16 +87,13 @@ static int my_isp_remove(struct platform_device *pdev)
 	
     isp_info("\n");
 
-
 	if (!myisp) {
 		isp_err("Private data structure is NULL\n");
         return -ENODEV;
 	}
 
-
 	// 清理私有数据
 	v4l2_set_subdevdata(&myisp->sd, NULL);
-
 
 	isp_info("ok\n");
 	

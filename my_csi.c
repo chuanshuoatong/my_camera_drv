@@ -55,12 +55,12 @@ static const struct v4l2_subdev_ops csi_subdev_ops = {
     .video 	= &csi_video_ops,
 };
 
-void my_csi_notify_frame_ready(void)
+void notify_csi_frame_ready(void)
 {
 	frame_ready = true;
 	wake_up_interruptible(&csi_wait_queue);
 }
-EXPORT_SYMBOL(my_csi_notify_frame_ready);
+EXPORT_SYMBOL(notify_csi_frame_ready);
 
 void my_csi_register_dma_cb(void *cb)
 {
@@ -164,25 +164,20 @@ static int my_csi_probe(struct platform_device *pdev)
 	if (!mycsi)
 		return -ENOMEM;
 
-
 	// 将私有数据结构与pdev关联
 	mycsi->pdev = pdev;
 	platform_set_drvdata(pdev, mycsi);
-
 
 	// 初始化 v4l2_subdev
     v4l2_subdev_init(&mycsi->sd, &csi_subdev_ops);
     mycsi->sd.owner = THIS_MODULE;
     snprintf(mycsi->sd.name, sizeof(mycsi->sd.name), "my_csi_subdev");
 
-
 	// 将私有数据与subdev关联
 	v4l2_set_subdevdata(&mycsi->sd, pdev);
 
-
 	// 初始化等待队列
     init_waitqueue_head(&csi_wait_queue);
-	
 	
 	// 给fbuffer分配内存，使用DMA共享内存，YUV422，每像素占2Byte
 	mycsi->fbuffer = dma_alloc_coherent(&pdev->dev, (FRAME_WIDTH * FRAME_HEIGHT * BYTES_PER_PIX_YUYV), &mycsi->dma_handle, GFP_KERNEL);
@@ -191,7 +186,6 @@ static int my_csi_probe(struct platform_device *pdev)
     	return -ENOMEM;
 	}
 	csi_info("Allocate DMA buffer ok\n");
-
 
 	// 启动内核线程
     csi_thread = kthread_run(csi_thread_fn, mycsi, "csi_thread");
@@ -213,16 +207,13 @@ static int my_csi_remove(struct platform_device *pdev)
 	
     csi_info("\n");
 
-
 	if (!mycsi) {
 		csi_err("Private data structure is NULL\n");
         return -ENODEV;
 	}
 
-
 	// 清理私有数据
 	v4l2_set_subdevdata(&mycsi->sd, NULL);
-
 
 	// 停掉内核线程
 	if (csi_thread) {
@@ -230,14 +221,12 @@ static int my_csi_remove(struct platform_device *pdev)
         csi_info("CSI thread stopped\n");
     }
 	
-	
 	// 手动释放dma内存
 	if (mycsi->fbuffer) {
         dma_free_coherent(&pdev->dev, (FRAME_WIDTH * FRAME_HEIGHT * BYTES_PER_PIX_YUYV), mycsi->fbuffer, mycsi->dma_handle);
         csi_info("DMA buffer freed\n");
     }
 
-	
 	csi_info("ok\n");
 	
 	return 0;

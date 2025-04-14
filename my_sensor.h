@@ -1,9 +1,7 @@
 #ifndef __MY_SENSOR_H__
 #define __MY_SENSOR_H__
 
-
 #include <media/v4l2-subdev.h>
-
 
 // 私有数据结构
 struct my_sensor {
@@ -13,7 +11,6 @@ struct my_sensor {
     struct hrtimer timer;			// 定时器
     struct work_struct work;		// 工作项
 };
-
 
 #endif /* __MY_SENSOR_H__ */
 
