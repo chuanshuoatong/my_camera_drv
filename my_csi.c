@@ -58,7 +58,7 @@ static const struct v4l2_subdev_ops csi_subdev_ops = {
 void my_csi_notify_frame_ready(void)
 {
 	frame_ready = true;
-	wake_up_process(csi_thread);
+	wake_up_interruptible(&csi_wait_queue);
 }
 EXPORT_SYMBOL(my_csi_notify_frame_ready);
 
