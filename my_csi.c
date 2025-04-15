@@ -4,10 +4,10 @@
 #include <linux/string.h>
 #include <linux/export.h>
 #include <linux/kthread.h>
-//#include <linux/delay.h>
 #include <linux/dma-mapping.h>
 #include <media/videobuf2-core.h>
 #include "my_csi.h"
+#include "my_ringbuffer.h"
 
 // 定义 TAG
 #define TAG "[my_csi_drv]: "
@@ -186,6 +186,8 @@ static int my_csi_probe(struct platform_device *pdev)
     	return -ENOMEM;
 	}
 	csi_info("Allocate DMA buffer ok\n");
+
+	my_ring_buffer_init(&pdev->dev, NULL, 1024);
 
 	// 启动内核线程
     csi_thread = kthread_run(csi_thread_fn, mycsi, "csi_thread");

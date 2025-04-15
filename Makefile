@@ -41,6 +41,7 @@ EXTRA_CFLAGS += -I$(KERN_DIR)/include \
 ccflags-y += -Wno-unused-variable
 
 # 编译目标
+obj-m += my_ringbuffer.o
 obj-m += my_isp.o
 obj-m += my_csi.o
 obj-m += my_sensor.o
