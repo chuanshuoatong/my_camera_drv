@@ -21,5 +21,12 @@
 	   第一，csi驱动使用的DMA缓冲区只有一份，再高帧率环境下，考虑使用多缓冲区的ring buffer来管理；
 	   第二，一旦启用isp，csi与isp之间的缓冲区存在同步问题（生产者与消费者的问题），考虑在csi与isp的共享ring buffer上加wait queue来实现同步；
 
-	
+2025/04/17
+	1）加载/卸载模块：
+		insmod /data/my_ringbuffer.ko;insmod /data/my_isp.ko;insmod /data/my_csi.ko;insmod /data/my_sensor.ko;insmod /data/my_camera.ko
+		rmmod my_camera;rmmod my_sensor;rmmod my_csi;rmmod my_isp;rmmod my_ringbuffer
+	2）运行测试程序：
+		将 test_my_camera push 到 /data/
+		cd /data;./test_my_camera
+		获取到的帧会保存在 /data/output 文件夹中。
 
