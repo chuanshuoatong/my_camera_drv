@@ -71,6 +71,7 @@ struct mycam_buffer {
 static struct my_camera *g_mycam = NULL;
 
 extern void my_csi_register_dma_cb(void *cb);
+extern void my_isp_register_dma_cb(void *cb);
 
 static inline struct mycam_buffer *to_mycam_buffer(struct vb2_v4l2_buffer *vbuf)
 {
@@ -887,7 +888,8 @@ static int my_camera_probe(struct platform_device *pdev)
 
 	g_mycam = mycam;
 
-	my_csi_register_dma_cb(mycam_simulate_dma_transfer);
+	//my_csi_register_dma_cb(mycam_simulate_dma_transfer);
+	my_isp_register_dma_cb(mycam_simulate_dma_transfer);
 
 	cam_info("ok\n");
 

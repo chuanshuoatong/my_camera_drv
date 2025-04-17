@@ -7,7 +7,6 @@
 #include <linux/dma-mapping.h>
 #include <media/videobuf2-core.h>
 #include "my_csi.h"
-#include "my_ringbuffer.h"
 
 // 定义 TAG
 #define TAG "[my_csi_drv]: "
@@ -28,6 +27,9 @@ static struct wait_queue_head csi_wait_queue;
 static struct task_struct *csi_thread = NULL;
 static bool frame_ready = false;
 static struct my_csi *g_mycsi = NULL;
+
+extern void my_isp_sync_ring_buffer(struct my_ring_buffer *rb);
+extern void my_isp_wake_up_consumer(void);
 
 // CSI 子设备的操作函数
 static int csi_s_power(struct v4l2_subdev *sd, int on)
@@ -73,20 +75,6 @@ void my_csi_register_dma_cb(void *cb)
 }
 EXPORT_SYMBOL(my_csi_register_dma_cb);
 
-// 生成一帧 YUV422 数据（YUYV 排布）
-static void generate_one_frame_yuyv(uint8_t *buffer, int width, int height, u8 Y, u8 U, u8 V)
-{	
-	int c, r;
-	for (r = 0; r < height; r++) {
-        for (c = 0; c < width; c += 2) {
-            buffer[r * width * 2 + c * 2] = Y;     // Y0
-            buffer[r * width * 2 + c * 2 + 2] = Y; // Y1
-            buffer[r * width * 2 + c * 2 + 1] = U; // U
-            buffer[r * width * 2 + c * 2 + 3] = V; // V
-        }
-    }
-}
-
 static int csi_thread_fn(void *data)
 {
 	struct my_csi *mycsi = (struct my_csi *)data;
@@ -95,7 +83,7 @@ static int csi_thread_fn(void *data)
 	void *vaddr = NULL;
 
 	if (!mycsi || !mycsi->fbuffer) {
-		csi_info("Invalid pointer\n");
+		csi_err("Invalid pointer\n");
 		return -EINVAL;
 	}
 	
@@ -108,45 +96,12 @@ static int csi_thread_fn(void *data)
 			
 			csi_info("Frame is ready, id=%d\n", i);
 			
-			frame_ready = false;			
-		
-			// 获取一帧模拟数据，每次更新一种颜色
-			switch (i++ % 9) {
-				case 0:
-					generate_one_frame_yuyv(mycsi->fbuffer, FRAME_WIDTH, FRAME_HEIGHT, 235, 128, 128); 	// white
-					break;
-				case 1:
-					generate_one_frame_yuyv(mycsi->fbuffer, FRAME_WIDTH, FRAME_HEIGHT, 76, 84, 255);	// red
-					break;
-				case 2:
-					generate_one_frame_yuyv(mycsi->fbuffer, FRAME_WIDTH, FRAME_HEIGHT, 168, 102, 221);	// orange
-					break;
-				case 3:
-					generate_one_frame_yuyv(mycsi->fbuffer, FRAME_WIDTH, FRAME_HEIGHT, 210, 16, 146);	// yellow
-					break;
-				case 4:
-					generate_one_frame_yuyv(mycsi->fbuffer, FRAME_WIDTH, FRAME_HEIGHT, 149, 44, 21);	// green
-					break;
-				case 5:
-					generate_one_frame_yuyv(mycsi->fbuffer, FRAME_WIDTH, FRAME_HEIGHT, 41, 240, 110);	// blue
-					break;
-				case 6:
-					generate_one_frame_yuyv(mycsi->fbuffer, FRAME_WIDTH, FRAME_HEIGHT, 72, 187, 155);	// indigo
-					break;
-				case 7:
-					generate_one_frame_yuyv(mycsi->fbuffer, FRAME_WIDTH, FRAME_HEIGHT, 107, 205, 212);	// purple
-					break;
-				case 8:
-					generate_one_frame_yuyv(mycsi->fbuffer, FRAME_WIDTH, FRAME_HEIGHT, 16, 128, 128);	// black
-					break;
-			}
+			frame_ready = false;
 
-			// 将帧buffer地址提交给DMA
-			if (!mycsi->post_to_dma_cb) {
-				csi_err("Invalid callback\n");
-			} else {
-				mycsi->post_to_dma_cb(mycsi->fbuffer, (FRAME_WIDTH * FRAME_HEIGHT * BYTES_PER_PIX_YUYV));
-			}			
+			my_ring_buffer_write(&mycsi->rb, NULL, (FRAME_WIDTH * FRAME_HEIGHT * BYTES_PER_PIX_YUYV));
+
+			my_isp_wake_up_consumer();
+			
 		}
 	}
 
@@ -156,6 +111,7 @@ static int csi_thread_fn(void *data)
 static int my_csi_probe(struct platform_device *pdev)
 {
 	struct my_csi *mycsi;
+	int ret = 0;
 	
     csi_info("\n");
 
@@ -187,7 +143,15 @@ static int my_csi_probe(struct platform_device *pdev)
 	}
 	csi_info("Allocate DMA buffer ok\n");
 
-	my_ring_buffer_init(&pdev->dev, NULL, 1024);
+	// ring buffer 初始化
+	ret = my_ring_buffer_init(&pdev->dev, &mycsi->rb, (FRAME_WIDTH * FRAME_HEIGHT * BYTES_PER_PIX_YUYV));
+	if (ret) {
+    	csi_err("Failed to init ring buffer\n");
+    	return -ENOMEM;
+	}
+	csi_info("Inited ring buffer ok\n");
+	// 将 ring buffer 地址告诉 ISP
+	my_isp_sync_ring_buffer(&mycsi->rb);
 
 	// 启动内核线程
     csi_thread = kthread_run(csi_thread_fn, mycsi, "csi_thread");
