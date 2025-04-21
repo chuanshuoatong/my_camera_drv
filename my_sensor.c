@@ -4,6 +4,7 @@
 #include <linux/string.h>
 #include <linux/hrtimer.h>
 #include <linux/ktime.h>
+#include <media/v4l2-ctrls.h>
 #include "my_sensor.h"
 
 // 定义 TAG
@@ -79,6 +80,40 @@ static const struct v4l2_subdev_ops sensor_subdev_ops = {
     .video 	= &sensor_video_ops,
 };
 
+static int sensor_s_ctrl(struct v4l2_ctrl *ctrl)
+{
+    struct my_sensor *mysen = ctrl->priv;
+
+	sensor_info("id=%#x\n", ctrl->id);
+
+    if (ctrl->id == V4L2_CID_BASE + 0x1010) {
+        if (ctrl->val == true) {
+            sensor_info("On\n");
+        } else {
+            sensor_info("Off\n");
+        }
+    }
+
+	// TODO: 处理其它ctrl->id
+
+    return 0;
+}
+
+static const struct v4l2_ctrl_ops sensor_ctrl_ops = {
+    .s_ctrl = sensor_s_ctrl,
+};
+
+static const struct v4l2_ctrl_config sensor_onoff_cfg = {
+    .ops 	= &sensor_ctrl_ops,         // 操作集
+    .id 	= V4L2_CID_BASE + 0x1010,   // 自定义控制ID，同一个subdev中不可重复
+    .name 	= "sensor_onoff_ctrl",      // 控制项名称
+    .type 	= V4L2_CTRL_TYPE_BOOLEAN,   // 控制项类型
+    .min 	= 0,                        // 最小值，布尔类型固定为 0
+    .max 	= 1,                        // 最大值，布尔类型固定为 1
+    .step 	= 1,                        // 步长，布尔类型固定为 1
+    .def 	= 1,                        // 默认值，布尔类型必须为 0 或 1
+};
+
 static int my_sensor_probe(struct platform_device *pdev)
 {
 	struct my_sensor *mysen;
@@ -94,6 +129,18 @@ static int my_sensor_probe(struct platform_device *pdev)
 	// 将私有数据结构与pdev关联
 	mysen->pdev = pdev;
 	platform_set_drvdata(pdev, mysen);
+
+	// 初始化控制项处理器，分配1个控制项空间
+	v4l2_ctrl_handler_init(&mysen->ctrl_handler, 1);
+
+	// 注册一个自定义控制项到处理器上
+	mysen->sensor_onoff_ctrl = v4l2_ctrl_new_custom(&mysen->ctrl_handler, &sensor_onoff_cfg, mysen);
+	if (mysen->ctrl_handler.error) {
+		sensor_err("Failed to register ctrl, error=%d\n", mysen->ctrl_handler.error);
+	}
+	
+	// 将控制项处理器与子设备关联
+	mysen->sd.ctrl_handler = &mysen->ctrl_handler;
 
 	// 初始化 v4l2_subdev
 	v4l2_subdev_init(&mysen->sd, &sensor_subdev_ops);
@@ -145,6 +192,8 @@ static int my_sensor_remove(struct platform_device *pdev)
 	// 确保工作队列中正在被调度的任务完成，取消挂起的
 	cancel_work_sync(&mysen->work);
 
+	// 释放控制器申请的资源
+	v4l2_ctrl_handler_free(&mysen->ctrl_handler);
 
 	sensor_info("ok\n");
 

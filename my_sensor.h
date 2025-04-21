@@ -10,6 +10,8 @@ struct my_sensor {
     void *priv_data;       			// 其他私有数据（如寄存器基地址、硬件资源等）
     struct hrtimer timer;			// 定时器
     struct work_struct work;		// 工作项
+    struct v4l2_ctrl_handler ctrl_handler;	// 控制项句柄
+    struct v4l2_ctrl *sensor_onoff_ctrl;	// sensor开关控制项
 };
 
 #endif /* __MY_SENSOR_H__ */
